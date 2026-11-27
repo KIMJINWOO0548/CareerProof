@@ -33,6 +33,19 @@
         <header class="page-head"><h1 id="page-title" tabindex="-1">새 지원 프로젝트</h1><p id="subtitle"></p></header>
         <p id="status" class="status-message" role="status" aria-live="polite"></p>
         <div id="stage"></div>
+        <details id="run-history" class="panel action-details">
+          <summary>최근 반복 작성 기록</summary>
+          <p class="metadata">이 브라우저의 회차와 상태, 확인된 비용을 로컬에 기록합니다. 새로고침한 뒤에도 결과를 조회할 수 있습니다.</p>
+          <div class="form-flow">
+            <label class="field"><span>실행 선택</span><select id="history-select" disabled></select></label>
+            <div class="cta-row">
+              <button class="btn secondary" type="button" id="history-refresh">목록 새로고침</button>
+              <button class="btn ghost" type="button" id="history-delete" disabled>선택한 기록 삭제</button>
+            </div>
+            <p class="metadata" id="history-status" role="status"></p>
+            <ol id="history-events"></ol>
+          </div>
+        </details>
         <noscript>지원서 편집기를 열려면 브라우저의 JavaScript를 활성화해 주세요.</noscript>
       </main>
     </div>

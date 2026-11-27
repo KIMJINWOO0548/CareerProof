@@ -14,7 +14,7 @@ MAX_RESPONSE_BYTES = 1024 * 1024
 FACT_ID = re.compile(r"[A-Za-z0-9_-]{1,100}")
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}")
 PRIVATE_TEXT = re.compile(
-    r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}"
+    r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}"
     r"|(?<!\d)\d{6}[- ]?[1-8]\d{6}(?!\d)"
     r"|(?<!\d)(?:\+82[- .]?(?:10|2|[3-6][1-5])|0(?:1[016789]|2|[3-6][1-5]))[- .]?\d{3,4}[- .]?\d{4}(?!\d)"
 )
@@ -24,6 +24,10 @@ POLICY = (
     "지원자의 경험을 확장하거나 팀의 성과를 개인에게 귀속하지 마세요. "
     "마스킹 토큰을 그대로 보존하세요. 사용한 사실의 ID를 factIds 배열에 넣으세요. "
     '반환 형식은 {"text":"초안","factIds":["사실ID"]} 입니다.'
+)
+REVISION_POLICY = (
+    " previousText는 검토할 이전 초안입니다. 사실의 근거는 facts에서 확인하세요. "
+    "feedback은 점검 항목이며 새 경험의 근거로 쓰지 마세요. charLimit가 있으면 그 분량 안에서 작성하세요."
 )
 DRAFT_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -36,12 +40,16 @@ DRAFT_SCHEMA = {
 
 
 class DraftError(Exception):
-    def __init__(self, status, message):
+    def __init__(self, status, message, code=None, *, usage=None):
         super().__init__(message)
         self.status = status
+        self.code = code or ("provider_error" if status >= 500 else "invalid_request")
+        self.usage = usage
 
 
 def request_json(provider, path, data, key=None):
+    # Once a paid request leaves the process, a broken response cannot prove zero cost.
+    uncertain = "cost_unknown" if provider == "anthropic" and path == "/v1/messages" else "provider_error"
     if provider == "ollama":
         host = "host.docker.internal" if os.environ.get("CAREERPROOF_CONTAINER") == "1" else "127.0.0.1"
         connection = http.client.HTTPConnection(host, 11434, timeout=60)
@@ -54,16 +62,17 @@ def request_json(provider, path, data, key=None):
         connection.request("POST", path, json.dumps(data, ensure_ascii=False).encode(), headers)
         response = connection.getresponse()
         if response.status in (401, 403):
-            raise DraftError(403, "제공자가 인증을 거절했습니다. 키와 모델 접근 권한을 확인하세요.")
+            raise DraftError(403, "제공자가 인증을 거절했습니다. 키와 모델 접근 권한을 확인하세요.", "key_required")
         if response.status == 404:
-            raise DraftError(422, "선택한 모델을 찾지 못했습니다. 모델 이름과 설치 상태를 확인하세요.")
+            raise DraftError(422, "선택한 모델을 찾지 못했습니다. 모델 이름과 설치 상태를 확인하세요.", "provider_error")
         if response.status == 429:
-            raise DraftError(429, "제공자의 요청 한도에 도달했습니다.")
+            raise DraftError(429, "제공자의 요청 한도에 도달했습니다.", "provider_error")
         if not 200 <= response.status < 300:
-            raise DraftError(502, "제공자 요청이 실패했습니다. 재요청 전 제공자 사용 내역을 확인하세요.")
+            code = uncertain if response.status >= 500 or response.status == 408 else "provider_error"
+            raise DraftError(502, "제공자 요청이 실패했습니다. 재요청 전 제공자 사용 내역을 확인하세요.", code)
         raw = response.read(MAX_RESPONSE_BYTES + 1)
         if len(raw) > MAX_RESPONSE_BYTES:
-            raise DraftError(502, "제공자의 응답 크기가 제한을 넘었습니다.")
+            raise DraftError(502, "제공자의 응답 크기가 제한을 넘었습니다.", uncertain)
         result = json.loads(raw)
         if not isinstance(result, dict):
             raise ValueError("object expected")
@@ -71,22 +80,22 @@ def request_json(provider, path, data, key=None):
     except (OSError, http.client.HTTPException):
         message = ("로컬 Ollama 연결과 모델 설치 상태를 확인하세요." if provider == "ollama"
                    else "제공자 연결이 끊겼습니다. 재요청 전 사용 내역을 확인하세요.")
-        raise DraftError(503, message) from None
+        raise DraftError(503, message, uncertain) from None
     except (ValueError, UnicodeError, RecursionError):
-        raise DraftError(502, "제공자 응답을 읽을 수 없습니다.") from None
+        raise DraftError(502, "제공자 응답을 읽을 수 없습니다.", uncertain) from None
     finally:
         connection.close()
 
 
-def text_field(value, limit):
-    if not isinstance(value, str) or not value.strip() or len(value) > limit:
-        raise DraftError(422, "문항, 사실 또는 모델 이름의 입력 범위를 확인하세요.")
+def text_field(value, limit, *, allow_blank=False):
+    if not isinstance(value, str) or (not allow_blank and not value.strip()) or len(value) > limit:
+        raise DraftError(422, "텍스트 항목의 형식과 입력 길이를 확인하세요.")
     # JSON can contain isolated UTF-16 surrogate escapes.
     try:
         value.encode("utf-8")
     except UnicodeEncodeError:
         raise DraftError(422, "문자 인코딩을 확인하세요.") from None
-    return value.strip()
+    return value if allow_blank else value.strip()
 
 
 def input_context(data):
@@ -106,7 +115,20 @@ def input_context(data):
         items.append({"id": fact_id, "text": text_field(item.get("text"), 4000)})
     if sum(len(item["text"]) for item in items) > 30000:
         raise DraftError(422, "선택한 사실은 합계 30,000자까지 보낼 수 있습니다.")
-    return {"question": question, "facts": items}
+    context = {"question": question, "facts": items}
+    if "previousText" in data:
+        context["previousText"] = text_field(data["previousText"], 50000, allow_blank=True)
+    if "charLimit" in data:
+        limit = data["charLimit"]
+        if type(limit) is not int or not 1 <= limit <= 100000:
+            raise DraftError(422, "문항 글자 수 제한은 1~100,000 사이의 정수로 입력하세요.")
+        context["charLimit"] = limit
+    if "feedback" in data:
+        feedback = data["feedback"]
+        if not isinstance(feedback, list) or len(feedback) > 3:
+            raise DraftError(422, "점검 항목은 최대 3개까지 보낼 수 있습니다.")
+        context["feedback"] = [text_field(item, 400) for item in feedback]
+    return context
 
 
 def masked_context(context, terms):
@@ -128,6 +150,12 @@ def masked_context(context, terms):
         "question": pattern.sub(replace, context["question"]),
         "facts": [{"id": f["id"], "text": pattern.sub(replace, f["text"])} for f in context["facts"]],
     }
+    if "previousText" in context:
+        result["previousText"] = pattern.sub(replace, context["previousText"])
+    if "feedback" in context:
+        result["feedback"] = [pattern.sub(replace, item) for item in context["feedback"]]
+    if "charLimit" in context:
+        result["charLimit"] = context["charLimit"]
     return result, {placeholder: literal for literal, placeholder in lookup.items()}
 
 
@@ -159,25 +187,50 @@ def usage_cost(inputs, outputs):
             + outputs * Decimal(PRICING["usd_per_million_output"])) / 1_000_000
 
 
-def token_count(value):
+def token_count(value, *, error_code="provider_error"):
     if type(value) is not int or value < 0:
-        raise DraftError(502, "사용량을 확인할 수 없습니다. 제공자 사용 내역을 확인하세요.")
+        raise DraftError(502, "사용량을 확인할 수 없습니다. 제공자 사용 내역을 확인하세요.", error_code)
     return value
+
+
+def read_cloud_draft(result, allowed_ids, restore):
+    reported = result.get("usage")
+    if not isinstance(reported, dict):
+        raise DraftError(502, "사용량을 확인할 수 없습니다. 제공자 사용 내역을 확인하세요.", "cost_unknown")
+    inputs = token_count(reported.get("input_tokens"), error_code="cost_unknown")
+    outputs = token_count(reported.get("output_tokens"), error_code="cost_unknown")
+    usage = {"inputTokens": inputs, "outputTokens": outputs, "costUsd": str(usage_cost(inputs, outputs))}
+
+    blocks = result.get("content")
+    if not isinstance(blocks, list) or result.get("stop_reason") != "tool_use":
+        raise DraftError(502, "완전한 초안을 받지 못했습니다.", usage=usage)
+    candidates = [b.get("input") for b in blocks if isinstance(b, dict)
+                  and b.get("type") == "tool_use" and b.get("name") == "draft"]
+    if len(candidates) != 1:
+        raise DraftError(502, "제공자가 반환한 초안을 구분할 수 없습니다.", usage=usage)
+    try:
+        parsed = parse_candidate(candidates[0], allowed_ids, restore)
+    except DraftError as error:
+        error.usage = usage
+        raise
+    return {**parsed, "usage": usage}
 
 
 def make_draft(data, key=None, send=request_json):
     if not isinstance(data, dict):
         raise DraftError(422, "JSON 객체를 입력하세요.")
     context = input_context(data)
+    policy = POLICY
+    if "previousText" in context or "feedback" in context or "charLimit" in context:
+        policy += REVISION_POLICY
+    allowed_ids = {item["id"] for item in context["facts"]}
     model = text_field(data.get("model"), 120)
     provider = data.get("provider", "ollama")
-    restore = {}
-    usage = None
     if provider == "anthropic":
         if model != PRICING["model"] or data.get("confirmed") is not True:
             raise DraftError(422, "클라우드 모델과 전송 동의를 확인하세요.")
         if not key or not re.fullmatch(r"[!-~]{1,512}", key):
-            raise DraftError(422, "유효한 BYOK 키를 입력하세요.")
+            raise DraftError(422, "유효한 BYOK 키를 입력하세요.", "key_required")
         try:
             budget = Decimal(str(data.get("budgetUsd")))
             if not budget.is_finite() or not 0 < budget <= 1:
@@ -187,7 +240,7 @@ def make_draft(data, key=None, send=request_json):
         context, restore = masked_context(context, data.get("redactTerms", []))
         message = {"role": "user", "content": json.dumps(context, ensure_ascii=False)}
         body = {
-            "model": model, "system": POLICY, "messages": [message],
+            "model": model, "system": policy, "messages": [message],
             "tools": [{"name": "draft", "description": "Return one grounded Korean draft.",
                        "input_schema": DRAFT_SCHEMA}],
             "tool_choice": {"type": "tool", "name": "draft", "disable_parallel_tool_use": True},
@@ -195,23 +248,10 @@ def make_draft(data, key=None, send=request_json):
         counted = send(provider, "/v1/messages/count_tokens", body, key)
         estimated = token_count(counted.get("input_tokens"))
         if usage_cost(estimated + 64, MAX_OUTPUT) > budget:
-            raise DraftError(422, "최대 출력까지의 예상 비용이 예산을 초과해 초안 생성을 중지했습니다.")
+            raise DraftError(422, "최대 출력까지의 예상 비용이 예산을 초과해 초안 생성을 중지했습니다.", "budget_limit")
         result = send(provider, "/v1/messages", {**body, "max_tokens": MAX_OUTPUT}, key)
-        blocks = result.get("content")
-        if not isinstance(blocks, list) or result.get("stop_reason") != "tool_use":
-            raise DraftError(502, "완전한 초안을 받지 못했습니다. 제공자 사용 내역을 확인하세요.")
-        candidates = [b.get("input") for b in blocks if isinstance(b, dict)
-                      and b.get("type") == "tool_use" and b.get("name") == "draft"]
-        if len(candidates) != 1:
-            raise DraftError(502, "제공자가 반환한 초안을 구분할 수 없습니다.")
-        raw = candidates[0]
-        reported = result.get("usage")
-        if not isinstance(reported, dict):
-            raise DraftError(502, "사용량을 확인할 수 없습니다. 제공자 사용 내역을 확인하세요.")
-        inputs = token_count(reported.get("input_tokens"))
-        outputs = token_count(reported.get("output_tokens"))
-        usage = {"inputTokens": inputs, "outputTokens": outputs, "costUsd": str(usage_cost(inputs, outputs))}
-    elif provider == "ollama":
+        return read_cloud_draft(result, allowed_ids, restore)
+    if provider == "ollama":
         if not MODEL_NAME.fullmatch(model) or "cloud" in model.lower() or key:
             raise DraftError(422, "Ollama에 설치된 로컬 모델 이름을 입력하세요.")
         info = send(provider, "/api/show", {"model": model})
@@ -219,15 +259,13 @@ def make_draft(data, key=None, send=request_json):
             raise DraftError(422, "로컬 실행에 내려받은 모델을 선택하세요.")
         result = send(provider, "/api/chat", {
             "model": model, "stream": False, "format": DRAFT_SCHEMA,
-            "messages": [{"role": "system", "content": POLICY},
+            "messages": [{"role": "system", "content": policy},
                          {"role": "user", "content": json.dumps(context, ensure_ascii=False)}],
             "options": {"num_predict": MAX_OUTPUT},
         })
         message = result.get("message")
         if not isinstance(message, dict) or result.get("done") is not True or result.get("done_reason") == "length":
             raise DraftError(502, "로컬 모델이 초안 작성을 완료하지 못했습니다.")
-        raw = message.get("content")
-    else:
-        raise DraftError(422, "지원하는 제공자를 선택하세요.")
-    parsed = parse_candidate(raw, {item["id"] for item in context["facts"]}, restore)
-    return {**parsed, "usage": usage}
+        parsed = parse_candidate(message.get("content"), allowed_ids, {})
+        return {**parsed, "usage": None}
+    raise DraftError(422, "지원하는 제공자를 선택하세요.")

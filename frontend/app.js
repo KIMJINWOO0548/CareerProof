@@ -1,5 +1,7 @@
 import { countText, scoreText } from "./analysis.js";
 import { mountCalibration } from "./calibration.js";
+import { createLoop } from "./loop.js";
+import { createRunJournal } from "./journal.js";
 import {
   createWorkspace, addFact, confirmFact, importResume, addQuestion,
   saveRevision, approveRevision, backupWorkspace, restoreWorkspace,
@@ -10,6 +12,7 @@ const dialog = document.querySelector("#review");
 const status = document.querySelector("#status");
 const restoreFile = document.querySelector("#restore-file");
 const drafts = new Map();
+const loops = new Map();
 const titles = { writer: "문항 작성", facts: "사실 원장", export: "확정본 내보내기" };
 const kinds = { self_intro: "자기소개서", career_desc: "경력기술서" };
 const cloudModel = "claude-haiku-4-5-20251001";
@@ -27,7 +30,7 @@ function warnBeforeUnload(event) {
 
 function trackChanges(workspaceChanged = needsBackup) {
   needsBackup = workspaceChanged;
-  if (needsBackup || workspace?.questions.some(modified)) {
+  if (needsBackup || workspace?.questions.some(modified) || generating()) {
     window.addEventListener("beforeunload", warnBeforeUnload);
   } else {
     window.removeEventListener("beforeunload", warnBeforeUnload);
@@ -108,9 +111,20 @@ function goto(page, moveFocus = true) {
   if (moveFocus) document.querySelector("#page-title").focus();
 }
 
-function setWorkspace(next, needsFirstBackup = false) {
+function stopModelWork() {
   request?.controller.abort();
   request = null;
+  for (const run of loops.values()) {
+    run.key = "";
+    if (["running", "pausing", "paused"].includes(run.controller.state.phase)) run.controller.cancel();
+  }
+}
+
+window.addEventListener("pagehide", stopModelWork);
+
+function setWorkspace(next, needsFirstBackup = false) {
+  stopModelWork();
+  loops.clear();
   drafts.clear();
   workspace = next;
   trackChanges(needsFirstBackup);
@@ -246,17 +260,80 @@ function historyPanel(q) {
       ${revision.id === q.approvedRevisionId ? ' · 확정본' : ''}</p></li>`).join("")}</ul></details>`;
 }
 
+function locked(q) {
+  return ["running", "pausing"].includes(loops.get(q.id)?.controller.state.phase);
+}
+
+function generating() {
+  return Boolean(request) || [...loops.values()].some(run => ["running", "pausing"].includes(run.controller.state.phase));
+}
+
+const phaseLabel = { idle: "시작 전", running: "작성 중", pausing: "일시 정지 대기", paused: "일시 정지", completed: "완료", cancelled: "취소" };
+const reasonLabel = {
+  user: "편집할 수 있습니다.", user_stop: "사용자가 반복을 마쳤습니다.", cancelled: "사용자가 실행을 취소했습니다.",
+  target_reached: "추천본이 설정한 문체 목표에 도달했습니다.", max_iter: "최대 작성 횟수에 도달했습니다.",
+  stagnated: "연속된 제안에서 개선을 확인하지 못했습니다.", needs_user_input: "경험을 보강하거나 본문을 고친 뒤 재개하세요.",
+  budget_limit: "남은 예산으로 추가 작성이 어렵습니다.", cost_unknown: "호출 비용을 확인할 수 없어 추가 작성을 멈췄습니다. 제공자 사용 내역을 확인하세요.",
+  key_required: "모델 접근 권한과 API 키를 확인하세요.", provider_error: "모델에 연결하지 못했거나 유효한 응답을 받지 못했습니다.",
+  invalid_request: "보낼 원문이나 모델 설정을 확인하고 새 실행을 시작하세요.",
+};
+const gateLabel = {
+  length: "문자·바이트·줄 제한을 초과했습니다.", evidence: "답변에 쓴 수치·단위 또는 영문 이름을 연결한 사실과 대조해 주세요.",
+  preservation: "선택한 사실의 참조 또는 본문에서 확인할 수 있는 근거 표현이 빠졌습니다.", no_improvement: "현재 추천본보다 개선된 점을 찾지 못했습니다.",
+  invalid_candidate: "답변 본문이나 근거의 형식을 확인할 수 없습니다.",
+};
+
+function loopPanel(q, draft) {
+  const run = loops.get(q.id);
+  if (!run) return "";
+  const state = run.controller.state;
+  const { phase, reason, best } = state;
+  const running = ["running", "pausing"].includes(phase);
+  const paused = phase === "paused";
+  const resumable = paused && !["budget_limit", "cost_unknown", "invalid_request"].includes(reason);
+  const summary = reasonLabel[reason] || (phase === "pausing" ? "현재 요청이 끝나면 편집할 수 있습니다." : "");
+  const decision = state.events.findLast(event => ["best_updated", "gate_rejected"].includes(event.type));
+  const canUse = best && !running;
+  const cost = run.provider === "anthropic"
+    ? ` · 확인된 사용액 $${esc(state.spentUsd)} / $${esc(run.budgetUsd)}${state.usagePending || state.usageUnknown ? " · 미정산 호출 있음" : ""}` : "";
+  return `<div class="loop-result" data-phase="${esc(phase)}" data-iteration="${state.iteration}">
+    <div class="row-between"><h3>반복 작성</h3><span class="badge" role="status" tabindex="-1">${phaseLabel[phase]} · ${state.iteration} / ${state.maxIterations}회</span></div>
+    <p class="metadata">${esc(run.model)}${cost}${run.target !== null ? ` · 목표 ${run.target}점 이하` : ""}</p>
+    ${decision?.type === "gate_rejected" ? `<p class="metadata">${decision.iteration ? decision.iteration + "회차" : "시작 본문"} 보류 · ${gateLabel[decision.reason] ?? "근거를 다시 검토하세요."}</p>` : ""}
+    ${summary ? `<p class="description">${summary}</p>` : ""}
+    ${paused && state.questions.length ? `<h4>보강할 근거</h4><ul>${state.questions.map(item => `<li>${esc(item)}</li>`).join("")}</ul>${button("사실 원장 열기","to-facts","ghost")}` : ""}
+    <div class="cta-row">
+      ${phase === "running" ? button("일시 정지","loop-pause") : ""}
+      ${resumable ? button("수정본으로 재개","loop-resume","primary",generating()) : ""}
+      ${running || paused ? button("여기서 마치기","loop-stop") + button("실행 취소","loop-cancel","ghost") : ""}
+    </div>
+    ${running && run.provider === "anthropic" ? '<p class="metadata">종료·취소해도 이미 전송한 호출은 과금될 수 있습니다.</p>' : ""}
+    ${canUse ? `<details class="action-details"><summary>추천본 비교 · ${best.score.total ?? "—"} / 100점${best.score.abstain ? " · 참고용" : ""}</summary>
+      <div class="diff-grid"><div class="diff before"><strong>현재 편집본</strong><p>${esc(draft.text || "빈 답변")}</p></div>
+      <div class="diff after"><strong>검증을 통과한 추천본</strong><p>${esc(best.text)}</p></div></div>
+      <p class="metadata">연결한 근거 ${best.factIds.length}건 · 미보정 문체 진단이며 합격 예측이 아닙니다.</p>
+      ${button("추천본을 편집기에 반영","loop-apply","primary")}</details>` : ""}
+  </div>`;
+}
+
 function modelPanel(q, draft) {
   const offer = draft.proposal;
   const busy = request?.questionId === q.id;
+  const live = ["running", "pausing", "paused"].includes(loops.get(q.id)?.controller.state.phase);
+  const activeElsewhere = workspace.questions.find(item => item.id !== q.id && (locked(item) || request?.questionId === item.id));
+  const controls = busy ? button("응답 수신 중단", "cancel-request") : !live
+    ? button("작성 설정", "model", "secondary", generating()) + button("반복 작성 설정", "loop-settings", "secondary", generating()) : "";
   return `<section class="panel model-offer"><div class="section-line"><h2>모델 초안 제안</h2>
-    ${busy ? button("응답 수신 중단", "cancel-request") : button("작성 설정", "model", "secondary", Boolean(request))}</div>
+    <div class="cta-row">${controls}</div></div>
+    ${activeElsewhere ? `<p class="metadata">다른 문항에서 모델을 사용하고 있습니다.
+      <button type="button" class="btn ghost" data-question="${esc(activeElsewhere.id)}">${esc(activeElsewhere.title)} 열기</button></p>` : ""}
+    ${loopPanel(q, draft)}
     ${busy ? '<p role="status">모델의 응답을 기다리고 있습니다. 수신을 중단한 뒤에도 서버 처리가 계속되고 클라우드 호출 비용이 발생할 수 있습니다.</p>' : ''}
-    ${offer ? `<div class="diff-grid"><div class="diff before"><strong>현재 편집본</strong><p>${esc(draft.text || "빈 답변")}</p></div>
+    ${offer && !live ? `<div class="diff-grid"><div class="diff before"><strong>현재 편집본</strong><p>${esc(draft.text || "빈 답변")}</p></div>
       <div class="diff after"><strong>도착한 제안</strong><p>${esc(offer.text)}</p></div></div>
       <p class="metadata">${esc(offer.context)} · 근거 ${offer.factIds.length}건</p>
       <div class="cta-row">${button("편집기에 반영", "apply-offer", "primary")}${button("제안 닫기", "dismiss-offer", "ghost")}</div>`
-      : '<p class="description">선택한 근거로 Ollama 또는 개인 API 키를 사용하는 클라우드 모델에 초안을 요청할 수 있습니다.</p>'}
+      : !loops.has(q.id) ? '<p class="description">연결한 근거로 초안을 한 번 요청하거나, 횟수를 정해 개선된 답변을 비교하세요.</p>' : ""}
   </section>`;
 }
 
@@ -296,8 +373,7 @@ function updateEditor() {
     ${counts.violations.map(message => `<p class="count-line" data-level="over">${esc(message)}</p>`).join("")}`;
   const version = q.headRevisionId ? revisionLabel(q, q.headRevisionId) : "첫 편집";
   document.querySelector("#version-state").textContent = `편집본 ${version}${modified(q) ? " · 저장 전" : ""} / 확정본 ${revisionLabel(q, q.approvedRevisionId)}`;
-  stage.querySelector('[data-action="approve"]').disabled = modified(q) || !q.headRevisionId;
-  stage.querySelector('[data-action="save"]').disabled = !modified(q);
+  setEditorLocks(q);
   const axes = [["형식 반복","pattern",30],["상투 표현","cliche",30],["구체성 결핍","specificity_deficit",40]];
   document.querySelector("#score").innerHTML = `<div class="section-line"><h2>문체 진단</h2><span class="badge">보정 전</span></div>
     <p class="score-total">${score.total === null ? "—" : score.total}<span> / 100</span></p>
@@ -306,6 +382,14 @@ function updateEditor() {
     ${reviewHighlights(visibleText, score.highlights)}
     ${score.questions.length ? `<details class="action-details"><summary>근거 보강 질문</summary><ul>${score.questions.slice(0,3).map(question => `<li>${esc(question)}</li>`).join("")}</ul></details>` : ""}
     <p class="muted-copy">점수는 진단이며 합격 예측이 아닙니다.</p>`;
+}
+
+function setEditorLocks(q) {
+  const lock = locked(q);
+  stage.querySelector("#answer").readOnly = lock;
+  stage.querySelectorAll("[data-fact]").forEach(input => { input.disabled = lock; });
+  stage.querySelector('[data-action="approve"]').disabled = lock || modified(q) || !q.headRevisionId;
+  stage.querySelector('[data-action="save"]').disabled = lock || !modified(q);
 }
 
 function exportPage() {
@@ -369,7 +453,7 @@ function previewRevision(q, revision) {
     `<h3>${esc(q.title)}</h3><p class="review-body">${esc(revision.text)}</p>
     <h3>연결한 근거</h3>${evidenceList(facts)}
     <p class="description">수치와 이름, 역할이 실제 경험과 일치하는지 확인하세요. 확정한 버전이 TXT 파일에 담깁니다.</p>
-    ${alreadyApproved ? '<p class="badge success">현재 확정본</p>' : '<button type="button" class="btn primary" id="confirm-revision">이 버전 확정</button>'}`,
+    ${alreadyApproved ? '<p class="badge success">현재 확정본</p>' : locked(q) ? "" : '<button type="button" class="btn primary" id="confirm-revision">이 버전 확정</button>'}`,
     modal => modal.querySelector("#confirm-revision")?.addEventListener("click", () => {
       try {
         approveRevision(workspace, q.id, revision.id);
@@ -382,75 +466,192 @@ function previewRevision(q, revision) {
     }));
 }
 
-function modelSettings(q) {
+function modelSettings(q, mode = "single") {
   const facts = selectedFacts(q);
   if (!facts.length) throw new Error("문항에서 확인된 사실을 한 건 이상 선택해 주세요.");
   if (facts.length > 40 || q.title.length > 4000 || facts.some(f => f.text.length > 4000)
       || facts.reduce((total, f) => total + f.text.length, 0) > 30000)
     throw new Error("문항은 4,000자 이내, 근거는 각 4,000자 이내로 최대 40건·합계 30,000자까지 전송할 수 있습니다.");
-  openDialog("모델에 초안 요청", `<form id="model-form" class="form-flow" autocomplete="off">
+  const repeat = mode !== "single";
+  const run = mode === "resume" ? loops.get(q.id) : null;
+  const title = mode === "resume" ? "반복 작성 재개" : repeat ? "반복 작성 설정" : "모델에 초안 요청";
+  const draft = draftOf(q);
+  openDialog(title, `<form id="model-form" class="form-flow" data-mode="${mode}" autocomplete="off">
     <label class="field"><span>모델 제공자</span><select name="provider"><option value="ollama">Ollama · 로컬</option><option value="anthropic">Anthropic · 개인 키</option></select></label>
-    <div data-local>${field("설치한 Ollama 모델","model",`required maxlength="100" value="${esc(modelName || "qwen3:8b")}"`)}</div>
+    <div data-local>${field("설치한 Ollama 모델","model",`required maxlength="100" ${run ? "readonly" : ""} value="${esc(run?.model || modelName || "qwen3:8b")}"`)}</div>
     <fieldset data-cloud hidden disabled class="form-flow"><legend>Anthropic 호출 설정</legend>
       <span>모델 · ${cloudModel}</span>
       ${field("API 키","key",'required type="password" autocomplete="off" spellcheck="false"')}
-      ${field("요청 한 번의 예산 (USD)","budget",'required type="number" min="0.000001" max="1" step="any" value="0.03"')}
-      <label class="field"><span>추가로 가릴 이름·주소 (한 줄에 하나씩)</span><textarea name="redact" rows="2"></textarea></label>
+      ${field(repeat ? "전체 반복 예산 (USD)" : "요청 한 번의 예산 (USD)","budget",`required type="number" min="0.000001" max="1" step="any" ${run ? "readonly" : ""} value="${esc(run?.budgetUsd ?? 0.03)}"`)}
+      <label class="field"><span>추가로 가릴 이름·주소 (한 줄에 하나씩)</span><textarea name="redact" rows="2">${esc(run?.redactTerms?.join("\n") ?? "")}</textarea></label>
       <p class="muted-copy">서버가 이메일, 전화번호, 주민번호 형태와 입력한 이름·주소를 가린 후 Anthropic에 전송합니다. 원문에 남은 식별 정보를 확인하세요. 최대 출력은 1,200토큰입니다.</p>
     </fieldset>
+    ${repeat ? `<fieldset class="form-flow"><legend>반복 조건</legend><div class="field-grid">
+      ${field("최대 작성 횟수","iterations",`type="number" min="1" max="10" step="1" required ${run ? "readonly" : ""} value="${run?.maxIterations ?? 3}"`)}
+      ${field("목표 문체 지수 (선택)","target",`type="number" min="0" max="100" step="1" ${run ? "readonly" : ""} value="${run?.target ?? ""}"`)}
+      </div><p class="metadata">모델은 각 회차에 문항, 연결한 사실, 글자 한도(${q.limit}자), 작성 기준 본문과 직전 점검 의견을 받습니다. 300자 미만은 목표 판정을 보류합니다.</p>
+      </fieldset>` : ""}
     <section><h3>보낼 문항과 근거 · 로컬 원문</h3><p class="plain-output">${esc(q.title)}</p>${evidenceList(facts)}</section>
-    <button class="btn primary" type="submit">이 문항과 근거로 초안 요청</button>
+    ${repeat ? `<section><h3>현재 편집본</h3><p class="review-body">${esc(draft.text || "빈 답변")}</p>
+      ${run?.controller.state.best && run.controller.state.best.text !== draft.text ? `<h3>이전 추천본</h3><p class="review-body">${esc(run.controller.state.best.text)}</p>` : ""}
+      <p class="metadata">검증을 통과한 본문으로 다음 회차를 작성합니다. 추천본 원문은 이 탭을 닫으면 사라집니다. 보관하려면 편집기에 반영해 저장하고 작업 JSON을 받으세요.</p></section>` : ""}
+    ${mode === "resume" && modified(q) ? '<p class="metadata">수정한 본문과 근거를 새 편집본으로 저장한 뒤 재개합니다.</p>' : ""}
+    <button class="btn primary" type="submit">${mode === "resume" ? "이 내용으로 재개" : repeat ? "이 설정으로 반복 시작" : "이 문항과 근거로 초안 요청"}</button>
     </form>`, modal => {
     const form = modal.querySelector("form");
-    form.elements.provider.addEventListener("change", () => {
+    function updateProvider() {
       const cloud = form.elements.provider.value === "anthropic";
       form.querySelector("[data-local]").hidden = cloud;
       form.elements.model.disabled = cloud;
       form.querySelector("[data-cloud]").hidden = !cloud;
       form.querySelector("[data-cloud]").disabled = !cloud;
       form.elements.key.value = "";
-    });
+    }
+    if (run) {
+      form.elements.provider.value = run.provider;
+      form.elements.provider.disabled = true;
+    }
+    updateProvider();
+    form.elements.provider.addEventListener("change", updateProvider);
   });
 }
 
 function refreshModelPanel() {
   const q = activeQuestion();
   const panel = stage.querySelector(".model-offer");
-  if (q && currentPage === "writer" && panel) panel.outerHTML = modelPanel(q, draftOf(q));
+  if (q && currentPage === "writer" && panel) {
+    const wasFocused = panel.contains(document.activeElement);
+    const focus = wasFocused ? document.activeElement.dataset.action : null;
+    const compared = panel.querySelector(".loop-result details")?.open;
+    panel.outerHTML = modelPanel(q, draftOf(q));
+    const comparison = stage.querySelector(".loop-result details");
+    if (comparison && compared) comparison.open = true;
+    if (wasFocused) {
+      const replacement = focus && stage.querySelector(`[data-action="${CSS.escape(focus)}"]:not([disabled])`);
+      (replacement || stage.querySelector('.loop-result [role="status"]'))?.focus({preventScroll: true});
+    }
+    setEditorLocks(q);
+  }
 }
 
-async function fetchDraft(form) {
-  if (request) throw new Error("진행 중인 요청이 있습니다.");
-  const q = activeQuestion();
-  const facts = selectedFacts(q).map(({id,text}) => ({id,text}));
+function readModelSettings(form) {
   const provider = form.elements.provider.value;
   const cloud = provider === "anthropic";
   const model = cloud ? cloudModel : form.elements.model.value.trim();
-  const payload = {provider, model, question: q.title, facts};
-  const headers = {"Content-Type":"application/json", "X-CareerProof-Request":"1"};
+  const key = cloud ? form.elements.key.value.trim() : "";
+  form.elements.key.value = "";
+  if (!cloud) modelName = model;
+  const redactTerms = cloud ? form.elements.redact.value.split(/\r?\n/).map(t => t.trim()).filter(Boolean) : [];
+  return {provider, model, key, redactTerms, budgetUsd: cloud ? Number(form.elements.budget.value) : 0};
+}
+
+async function requestDraft(settings, payload, signal, budgetUsd) {
+  const cloud = settings.provider === "anthropic";
+  const body = {...payload, provider: settings.provider, model: settings.model};
+  const headers = {
+    "Content-Type":"application/json", "X-CareerProof-Request":"1", "X-CareerProof-Command":crypto.randomUUID(),
+  };
   if (cloud) {
-    headers["X-LLM-API-Key"] = form.elements.key.value.trim();
-    form.elements.key.value = "";
-    payload.budgetUsd = form.elements.budget.value;
-    payload.redactTerms = form.elements.redact.value.split(/\r?\n/).map(t => t.trim()).filter(Boolean);
-    payload.confirmed = true;
-  } else modelName = model;
+    headers["X-LLM-API-Key"] = settings.key;
+    Object.assign(body, {budgetUsd: String(budgetUsd), redactTerms: settings.redactTerms, confirmed: true});
+  }
+  let response;
+  let result;
+  try {
+    response = await fetch("/api/draft", {method: "POST", headers, body: JSON.stringify(body), signal});
+    result = await response.json();
+  } catch (error) {
+    if (signal.aborted) throw error;
+    throw Object.assign(new Error("모델 응답을 받지 못했습니다."), {code: cloud ? "cost_unknown" : "provider_error"});
+  } finally {
+    delete headers["X-LLM-API-Key"];
+  }
+  if (!response.ok) throw Object.assign(new Error(result?.error || "모델 요청이 중단됐습니다."), {
+    status: response.status, code: result?.code || (cloud ? "cost_unknown" : "provider_error"), usage: result?.usage,
+  });
+  if (typeof result?.text !== "string" || !result.text.trim() || !Array.isArray(result.factIds)
+      || !result.factIds.length || !result.factIds.every(id => payload.facts.some(f => f.id === id))) {
+    throw Object.assign(new Error("모델이 반환한 초안이나 근거를 확인할 수 없습니다."), {
+      code: cloud && !result?.usage ? "cost_unknown" : "provider_error", usage: result?.usage,
+    });
+  }
+  return result;
+}
+
+function draftInput(q) {
+  const draft = draftOf(q);
+  return {text: draft.text, factIds: [...draft.factIds]};
+}
+
+async function submitLoop(form, q, settings) {
+  const mode = form.dataset.mode;
+  let run = loops.get(q.id);
+  if (mode === "resume") {
+    if (!run || run.controller.state.phase !== "paused") throw new Error("재개할 실행을 찾을 수 없습니다.");
+  } else {
+    const maxIterations = Number(form.elements.iterations.value);
+    const target = form.elements.target.value === "" ? null : Number(form.elements.target.value);
+    const snapshot = draftInput(q);
+    run = {...settings, maxIterations, target};
+    const journal = createRunJournal();
+    run.controller = createLoop({
+      workspace, question: q, initial: snapshot, maxIterations, target, provider: run.provider, budgetUsd: run.budgetUsd,
+      generate: ({previous, facts, question, remainingUsd, signal, feedback}) => {
+        const payload = {facts, question, charLimit: q.limit, feedback};
+        if (previous) payload.previousText = previous.text;
+        return requestDraft(run, payload, signal, remainingUsd);
+      },
+      onChange: state => {
+        journal.record(state);
+        if (["paused", "completed", "cancelled"].includes(state.phase)) run.key = "";
+        if (["completed", "cancelled"].includes(state.phase)) run.redactTerms = [];
+        if (loops.get(q.id) === run) {
+          refreshModelPanel();
+          trackChanges();
+        }
+      },
+    });
+    loops.set(q.id, run);
+  }
+  const input = draftInput(q);
+  try {
+    if (mode === "resume") {
+      if (modified(q)) {
+        const revision = saveRevision(workspace, q.id, {...input, baseRevisionId: draftOf(q).baseRevisionId});
+        draftOf(q).baseRevisionId = revision.id;
+        trackChanges(true);
+        render();
+      }
+      run.key = settings.key;
+      run.redactTerms = settings.redactTerms;
+    }
+    settings.key = "";
+    dialog.close();
+    if (mode === "resume") await run.controller.resume(input, draftOf(q).baseRevisionId);
+    else await run.controller.start();
+  } finally {
+    settings.key = "";
+    if (!["running", "pausing"].includes(run.controller.state.phase)) run.key = "";
+  }
+}
+
+async function fetchDraft(form) {
+  if (generating()) throw new Error("진행 중인 모델 요청이 있습니다.");
+  const q = activeQuestion();
+  const settings = readModelSettings(form);
+  if (form.dataset.mode !== "single") return submitLoop(form, q, settings);
+  const facts = selectedFacts(q).map(({id,text}) => ({id,text}));
+  const {model, provider} = settings;
   const pending = {questionId: q.id, controller: new AbortController()};
   request = pending;
   dialog.close();
   refreshModelPanel();
   tell(`${model}에 초안을 요청했습니다.`);
   try {
-    const response = await fetch("/api/draft", {
-      method: "POST", headers, body: JSON.stringify(payload), signal: pending.controller.signal,
-    });
-    const result = await response.json();
+    const result = await requestDraft(settings, {question:q.title, facts}, pending.controller.signal, settings.budgetUsd);
     if (pending !== request) return;
-    if (!response.ok) throw new Error(result.error || "모델의 응답을 받지 못했습니다.");
-    if (typeof result.text !== "string" || !result.text.trim() || !Array.isArray(result.factIds)
-        || !result.factIds.every(id => facts.some(f => f.id === id))) throw new Error("모델이 반환한 초안이나 근거를 확인할 수 없습니다.");
     const cost = result.usage?.costUsd;
-    const usage = cloud && cost != null && Number.isFinite(Number(cost)) ? ` · 사용액 $${cost}` : "";
+    const usage = provider === "anthropic" && cost != null && Number.isFinite(Number(cost)) ? ` · 사용액 $${cost}` : "";
     draftOf(q).proposal = {text: result.text, factIds: [...new Set(result.factIds)], context: `${model}${usage}`};
     tell(`‘${q.title}’의 초안이 도착했습니다. 편집본과 비교해 주세요.`);
   } catch (error) {
@@ -459,7 +660,7 @@ async function fetchDraft(form) {
       else report(error);
     }
   } finally {
-    delete headers["X-LLM-API-Key"];
+    settings.key = "";
     if (request === pending) { request = null; refreshModelPanel(); }
   }
 }
@@ -505,6 +706,7 @@ document.addEventListener("submit", event => {
 
 function handleAction(action) {
   const q = activeQuestion();
+  const run = q && loops.get(q.id);
   switch (action) {
     case "restore": restoreFile.click(); break;
     case "to-facts": goto("facts"); break;
@@ -524,6 +726,23 @@ function handleAction(action) {
     }
     case "approve": previewRevision(q, revisionOf(q)); break;
     case "model": modelSettings(q); break;
+    case "loop-settings": modelSettings(q, "loop"); break;
+    case "loop-resume": modelSettings(q, "resume"); break;
+    case "loop-pause": run.controller.pause(); break;
+    case "loop-stop": run.controller.stop(); break;
+    case "loop-cancel": run.controller.cancel(); break;
+    case "loop-apply": {
+      const best = run.controller.state.best;
+      if (!best || locked(q)) break;
+      const draft = draftOf(q);
+      draft.text = best.text;
+      draft.factIds = [...best.factIds];
+      trackChanges();
+      render();
+      tell("추천본을 편집기에 반영했습니다. 내용을 확인한 뒤 저장하고 확정하세요.");
+      stage.querySelector("#answer").focus();
+      break;
+    }
     case "cancel-request":
       request?.controller.abort();
       break;
@@ -589,8 +808,7 @@ stage.addEventListener("input", event => {
   if (event.target.id !== "answer") return;
   draftOf(activeQuestion()).text = event.target.value;
   trackChanges();
-  const comparison = stage.querySelector(".diff.before p");
-  if (comparison) comparison.textContent = event.target.value || "빈 답변";
+  stage.querySelectorAll(".diff.before p").forEach(item => { item.textContent = event.target.value || "빈 답변"; });
   updateEditor();
 });
 stage.addEventListener("change", event => {

@@ -212,7 +212,7 @@ function numericClaims(text) {
   return (text.normalize("NFKC").match(pattern) ?? []).map(token => token.replace(/[\s,]/gu, "").replace("−", "-"));
 }
 
-function checkApproval(workspace, question, revision) {
+export function checkApproval(workspace, question, revision) {
   if (!revision.text.trim()) fail("답변을 입력한 후 확정해 주세요.", "empty_answer");
   const { violations } = countText(revision.text, question.rule);
   if (violations.length) fail(violations.join(" "), "count_limit");

@@ -6,7 +6,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     read_only: true
+    volumes:
+      - careerproof-history:/var/lib/careerproof
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
+volumes:
+  careerproof-history:
