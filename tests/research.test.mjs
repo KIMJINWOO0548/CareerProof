@@ -49,6 +49,34 @@ test("확정본의 새로운 기술어와 부정된 경험은 수행 증거로 �
   assert.ok(!rows[0].matches.some(m => m.revisionId));
 });
 
+test("수행 근거는 기술별 같은 절에 있어야 하며 팀원의 수행과 구분한다", () => {
+  const ws = project();
+  const f = addFact(ws, { text: "팀원은 React 화면을 개발했고 저는 Python 수집기를 구현했습니다. WPF는 학습 중입니다.", source: "역할 기록" }); confirmFact(ws, f.id);
+  const rows = matchRequirements(ws, parseJobDescription("필수\nReact 개발 경험\nPython 개발 경험\nWPF 개발 경험").requirements);
+  assert.deepEqual(rows.map(row => row.status), ["weak", "covered", "weak"]);
+  assert.deepEqual(rows[1].matches[0].strongTerms, ["Python"]);
+});
+
+test("한 기술의 부정을 다른 기술에 적용하거나 확정본으로 지우지 않는다", () => {
+  const ws = project();
+  const f = addFact(ws, { text: "WPF 개발 경험은 없지만 C++ 제어 모듈을 구현했습니다.", source: "원문 기록" }); confirmFact(ws, f.id);
+  const q = addQuestion(ws, { title: "경험", limit: 500 });
+  const r = saveRevision(ws, q.id, { text: "WPF 화면과 C++ 모듈을 구현했습니다.", factIds: [f.id], baseRevisionId: null }); approveRevision(ws, q.id, r.id);
+  const rows = matchRequirements(ws, parseJobDescription("필수\nWPF 개발 경험\nC++ 개발 경험").requirements);
+  assert.deepEqual(rows.map(row => row.status), ["weak", "covered"]);
+  assert.ok(rows[0].matches.every(match => !match.strongTerms.includes("WPF")));
+});
+
+test("기술어 수행만으로 경력이나 업무 범위 조건까지 충족 처리하지 않는다", () => {
+  const ws = project();
+  const f = addFact(ws, { text: "C++ 제어 모듈을 구현했습니다.", source: "프로젝트" }); confirmFact(ws, f.id);
+  const [row] = matchRequirements(ws, parseJobDescription("필수\nC++ 개발 경력 5년 이상").requirements);
+  assert.equal(row.status, "weak");
+  assert.equal(row.conditionReview, true);
+  assert.deepEqual(row.missingTerms, []);
+  assert.match(row.reason, /추가 조건은 직접 확인/);
+});
+
 test("선택용 포트폴리오 후보는 페이지·출처·범위가 있고 중복되지 않는다", () => {
   const data = { filename: "자료.pdf", kind: "pdf", pages: [{ page: 1, text: "😀 C++ 모듈을 구현했습니다.\n😀 C++ 모듈을 구현했습니다." }, { page: 3, text: "WPF 화면을 개발했습니다." }] };
   const rows = portfolioCandidates(data); assert.equal(rows.length, 2);

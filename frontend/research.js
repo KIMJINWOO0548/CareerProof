@@ -68,6 +68,22 @@ export function parseJobDescription(text, source = "jd") {
 
 function substantive(text) { return text.length >= 12 && !/(?:경험|수행|개발|구현).{0,8}(?:없|않|못)|(?:미경험|미구현|미개발)/u.test(text) && /구현|개발|개선|설계|측정|검증|운영|해결|분석|배포|제작|담당|기여|수행|작성|자동화|\b(?:built|developed|implemented|tested|designed)\b/iu.test(text); }
 
+// A skill mention and an action must belong to the same clause. This is a
+// conservative text heuristic, not verification of authorship or proficiency.
+function performedTerms(text) {
+  return [...new Set(text.split(/[.!?](?:\s|$)|[\r\n;]|,\s*|(?:지만|했고|했으며|않았고|이고)\s*/u).flatMap(clause => {
+    if (!substantive(clause) || /없|않|못|미경험|미구현|미개발|\b(?:not|never|without)\b/iu.test(clause)) return [];
+    if (/팀원|팀에서|팀은|팀이|팀의|동료|타인|\b(?:teammate|colleague|team)\b/iu.test(clause)) return [];
+    return termsIn(clause);
+  }))];
+}
+
+function needsConditionReview(text) {
+  // Term matching cannot establish duration, versions, leadership or a specific
+  // deployment/domain scope. Keep these requirements pending human review.
+  return /\d+\s*(?:년|개월)|(?:c\+\+|c#|python|react|\.net|typescript|javascript)\s*\d|상용|실무|프로덕션|production|리딩|리더|주도|총괄|대규모|커널|kernel/iu.test(text);
+}
+
 export function matchRequirements(workspace, requirements = parseJobDescription(workspace.research?.jdText ?? "").requirements) {
   const facts = workspace.facts.filter(f => f.verified && f.source.trim()).map(f => ({ text: f.text, source: f.source, factId: f.id, verified: true }));
   const evidence = [...facts];
@@ -78,7 +94,7 @@ export function matchRequirements(workspace, requirements = parseJobDescription(
     if (!revision) continue;
     const linked = facts.filter(f => revision.factIds.includes(f.factId));
     // An approved sentence does not establish a new skill absent from its linked facts.
-    for (const fact of linked) evidence.push({ ...fact, verified: substantive(fact.text), text: revision.text, supportedTerms: termsIn(fact.text), source: `확정본: ${question.title} · ${fact.source}`, revisionId: revision.id });
+    for (const fact of linked) evidence.push({ ...fact, text: revision.text, supportedTerms: termsIn(fact.text), performedTerms: performedTerms(fact.text), source: `확정본: ${question.title} · ${fact.source}`, revisionId: revision.id });
   }
   const indexed = [...evidence, ...mentions].map(item => ({ item, terms: termsIn(item.text).filter(t => !item.supportedTerms || item.supportedTerms.includes(t)) }));
   return requirements.map(requirement => {
@@ -86,13 +102,16 @@ export function matchRequirements(workspace, requirements = parseJobDescription(
     const matches = indexed.flatMap(({ item, terms: observed }) => {
       const matched = terms.filter(term => observed.includes(term));
       if (!matched.length) return [];
-      return [{ ...item, matchedTerms: matched, strong: item.verified && substantive(item.text), span: sourceSpan(item.text, 0, item.text.length, item.source, item.page ?? null) }];
+      const supportedActions = performedTerms(item.text).filter(term => !item.performedTerms || item.performedTerms.includes(term));
+      const strongTerms = item.verified ? matched.filter(term => supportedActions.includes(term)) : [];
+      return [{ ...item, matchedTerms: matched, strongTerms, strong: strongTerms.length === matched.length, span: sourceSpan(item.text, 0, item.text.length, item.source, item.page ?? null) }];
     });
-    const coveredTerms = terms.filter(term => matches.some(m => m.strong && m.matchedTerms.includes(term)));
+    const coveredTerms = terms.filter(term => matches.some(m => m.strongTerms.includes(term)));
     const missingTerms = terms.filter(term => !coveredTerms.includes(term));
-    const status = terms.length && !missingTerms.length ? "covered" : matches.length ? "weak" : "missing";
-    const reason = !terms.length ? "자동 비교할 기술어가 없습니다. 역할·경력 조건을 직접 확인하세요." : status === "covered" ? "모든 기술어에 출처와 수행 내용이 있는 확인된 사실이 연결됩니다." : status === "weak" ? `근거 보완 필요: ${missingTerms.join(", ")}. 단순 언급과 미확인 원문은 충족 근거로 세지 않습니다.` : `확인된 수행 근거를 찾지 못했습니다: ${terms.join(", ")}.`;
-    return { ...requirement, status, matches, missingTerms, reason };
+    const conditionReview = needsConditionReview(requirement.text);
+    const status = terms.length && !missingTerms.length && !conditionReview ? "covered" : matches.length ? "weak" : "missing";
+    const reason = !terms.length ? "자동 비교할 기술어가 없습니다. 역할·경력 조건을 직접 확인하세요." : status === "covered" ? "모든 기술어에 출처와 같은 절의 수행 내용이 있는 확인된 사실이 연결됩니다. 숙련도·개인 기여는 원문을 확인하세요." : status === "weak" ? `${missingTerms.length ? `근거 보완 필요: ${missingTerms.join(", ")}. ` : ""}${conditionReview ? "경력·버전·역할·업무 범위 등 추가 조건은 직접 확인해야 합니다. " : ""}단순 언급과 미확인 원문은 충족 근거로 세지 않습니다.` : `확인된 수행 근거를 찾지 못했습니다: ${terms.join(", ")}.`;
+    return { ...requirement, status, matches, missingTerms, conditionReview, reason };
   });
 }
 

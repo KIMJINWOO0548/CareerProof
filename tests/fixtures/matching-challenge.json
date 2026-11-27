@@ -1,0 +1,173 @@
+{
+  "description": "독립적으로 작성한 한국어 개발자 이력서 매칭 챌린지. 각 기대 라벨은 JD의 전체 요구와 이력서에 명시된 본인 수행·기간·조건의 근거를 기준으로 고정했다.",
+  "cases": [
+    {
+      "id": "covered-react-components",
+      "jd": "React와 TypeScript로 재사용 가능한 접근성 준수 UI 컴포넌트를 설계하고 운영 서비스에 적용한 경험이 필요합니다.",
+      "facts": ["React·TypeScript 기반 공통 폼 컴포넌트를 설계해 4개 서비스에 적용했으며 키보드 탐색과 스크린리더 레이블을 직접 점검했습니다.", "디자인 시스템 담당자로 컴포넌트 API와 사용 예제를 문서화했습니다."],
+      "expected": "covered",
+      "why": "React·TypeScript 구현, 재사용, 접근성 점검, 실제 서비스 적용을 본인이 수행했다고 적었습니다."
+    },
+    {
+      "id": "covered-postgres-tuning",
+      "jd": "PostgreSQL 실행 계획을 분석해 느린 쿼리와 인덱스를 개선한 실무 경험을 찾습니다.",
+      "facts": ["주문 조회 API의 PostgreSQL 실행 계획을 확인하고 복합 인덱스를 조정해 해당 쿼리의 p95 응답 시간을 1.8초에서 420ms로 낮췄습니다."],
+      "expected": "covered",
+      "why": "PostgreSQL의 실행 계획 분석과 쿼리·인덱스 개선을 직접 수행한 구체적 사례입니다."
+    },
+    {
+      "id": "covered-kubernetes-duration",
+      "jd": "Kubernetes 기반 서비스를 2년 이상 운영하고 배포 장애 대응까지 맡은 경험이 필요합니다.",
+      "facts": ["2022년 3월부터 2024년 8월까지 Kubernetes 운영 당번으로 근무했습니다.", "Helm 배포를 관리하고 readiness probe 오류로 인한 롤아웃 중단을 직접 복구했습니다."],
+      "expected": "covered",
+      "why": "명시된 기간이 2년을 넘고, 운영과 배포 장애 대응도 본인이 맡았습니다."
+    },
+    {
+      "id": "covered-oauth-jwt",
+      "jd": "OAuth 2.0과 JWT를 이용한 로그인·토큰 검증 흐름을 백엔드에서 구현한 경험이 요구됩니다.",
+      "facts": ["Spring Boot 인증 모듈에서 OAuth 2.0 authorization code 콜백과 JWT 서명·만료 검증을 구현했습니다.", "토큰 재발급 시 refresh token 회전 처리를 추가했습니다."],
+      "expected": "covered",
+      "why": "OAuth 2.0 로그인과 JWT 검증을 백엔드에서 직접 구현했다는 근거가 있습니다."
+    },
+    {
+      "id": "covered-s3-lambda",
+      "jd": "AWS S3와 Lambda를 함께 사용해 파일 업로드 후처리 흐름을 구현하고 운영한 경험이 필요합니다.",
+      "facts": ["S3 업로드 버킷의 이벤트 알림으로 Lambda를 실행해 이미지 메타데이터를 추출하는 흐름을 구축했습니다.", "실패 이벤트 재처리와 CloudWatch 로그 알람도 설정했습니다."],
+      "expected": "covered",
+      "why": "S3와 Lambda를 함께 연결한 후처리 및 운영 조치를 직접 구현했습니다."
+    },
+    {
+      "id": "covered-python-airflow-etl",
+      "jd": "Python과 Airflow로 데이터 파이프라인을 직접 설계하고 재실행 가능한 ETL을 운영한 경험을 찾습니다.",
+      "facts": ["Python으로 정산 데이터 정제·적재 작업을 만들고 Airflow DAG로 스케줄링했습니다.", "중복 적재를 막는 기준 키와 task 재시도 설정을 넣어 월말 재실행을 담당했습니다."],
+      "expected": "covered",
+      "why": "Python ETL과 Airflow 오케스트레이션을 직접 구성했고 재실행 운영도 뒷받침됩니다."
+    },
+    {
+      "id": "covered-redis-cache",
+      "jd": "Redis 캐시를 적용하고 만료·무효화 정책까지 설계한 경험이 필요합니다.",
+      "facts": ["Redis를 상품 상세 조회 캐시에 적용하고 TTL을 정했습니다.", "상품 수정 이벤트에서 관련 키를 무효화하도록 구현해 오래된 가격이 노출되는 문제를 막았습니다."],
+      "expected": "covered",
+      "why": "Redis 적용뿐 아니라 JD가 요구한 TTL과 무효화 정책을 설계·구현했습니다."
+    },
+    {
+      "id": "covered-java-spring-batch",
+      "jd": "Java와 Spring Batch로 대량 데이터를 처리하는 재시작 가능한 배치 작업을 만든 경험을 찾습니다.",
+      "facts": ["Java·Spring Batch로 80만 건의 월간 청구 레코드를 처리하는 chunk 기반 작업을 개발했습니다.", "체크포인트와 skip 정책을 추가해 실패 구간부터 재시작할 수 있게 했습니다."],
+      "expected": "covered",
+      "why": "Java·Spring Batch 구현과 대량 처리, 재시작 조건이 모두 명시되어 있습니다."
+    },
+    {
+      "id": "weak-node-ownership",
+      "jd": "Node.js 서비스의 모듈 구조를 설계하고 장애 대응까지 주도한 경험이 필요합니다.",
+      "facts": ["Node.js와 Express를 사용해 내부 도구의 조회 API 몇 개를 추가했습니다.", "서비스 구조 설계와 온콜은 팀 리드가 담당했습니다."],
+      "expected": "weak",
+      "why": "Node.js 사용은 있으나 구조 설계와 장애 대응 주도는 명시적으로 뒷받침되지 않습니다."
+    },
+    {
+      "id": "weak-kotlin-team-project",
+      "jd": "Kotlin으로 Android 앱의 네트워크 계층을 설계하고 출시 후 유지보수한 경험을 찾습니다.",
+      "facts": ["대학 팀 프로젝트에서 Kotlin 화면 일부를 구현했습니다.", "네트워크 계층과 앱 배포는 다른 팀원이 맡았습니다."],
+      "expected": "weak",
+      "why": "Kotlin 경험은 있지만 요구된 네트워크 계층 설계와 출시 후 유지보수 근거가 없습니다."
+    },
+    {
+      "id": "weak-aws-missing-lambda",
+      "jd": "AWS S3와 Lambda를 함께 이용해 업로드 파일을 비동기 처리한 경험이 필요합니다.",
+      "facts": ["AWS S3에 사용자 업로드 파일을 보관하고 수명 주기 정책을 설정했습니다.", "파일 변환은 사내 VM에서 수동 배치로 진행했습니다."],
+      "expected": "weak",
+      "why": "S3는 사용했지만 Lambda를 포함한 비동기 처리 흐름은 수행하지 않았습니다."
+    },
+    {
+      "id": "weak-planned-react-migration",
+      "jd": "레거시 화면을 React로 전환하고 전환 범위를 직접 책임진 경험을 원합니다.",
+      "facts": ["현재 운영 화면의 jQuery 코드를 React로 옮기는 안을 제안했으며 다음 분기 착수 예정입니다.", "이번 분기에는 기존 화면의 CSS 오류만 수정했습니다."],
+      "expected": "weak",
+      "why": "React 전환은 계획 단계이며 실제 수행 이력은 기존 화면 수정뿐입니다."
+    },
+    {
+      "id": "weak-duration-python",
+      "jd": "Python 백엔드 개발을 3년 이상 지속적으로 담당한 경력을 요구합니다.",
+      "facts": ["Python으로 사내 리포트 API를 2024년 1월부터 2025년 2월까지 개발·운영했습니다.", "그 전 경력은 Java 유지보수였습니다."],
+      "expected": "weak",
+      "why": "Python 실무는 확인되지만 적힌 기간은 약 1년으로 3년 조건에 미달합니다."
+    },
+    {
+      "id": "weak-ci-team-ambiguous",
+      "jd": "GitHub Actions 기반 CI 파이프라인을 직접 설계하고 빌드 실패를 해결한 경험을 찾습니다.",
+      "facts": ["팀에서 GitHub Actions를 도입해 테스트와 빌드를 자동화했습니다.", "이력서에는 지원자의 담당 단계나 구체적인 실패 대응이 구분되어 있지 않습니다."],
+      "expected": "weak",
+      "why": "팀의 도입 사실은 있으나 본인의 설계 소유권과 장애 대응은 불명확합니다."
+    },
+    {
+      "id": "weak-colleague-ml",
+      "jd": "추천 모델을 직접 학습하고 온라인 서빙까지 연결한 경험이 필요합니다.",
+      "facts": ["동료가 학습한 추천 모델을 호출하는 REST API를 붙였습니다.", "모델 학습과 서빙 인프라는 데이터팀이 담당했습니다."],
+      "expected": "weak",
+      "why": "추천 모델과의 관련 경험은 있지만 학습·온라인 서빙 소유권은 다른 팀에 있습니다."
+    },
+    {
+      "id": "weak-sql-no-tuning",
+      "jd": "MySQL의 실행 계획과 인덱스를 분석해 성능 병목을 개선한 경험을 요구합니다.",
+      "facts": ["MySQL에서 사용자와 주문 테이블을 조인하는 조회 SQL을 작성했습니다.", "실행 계획 분석이나 인덱스 조정은 맡지 않았습니다."],
+      "expected": "weak",
+      "why": "MySQL·SQL 사용은 있으나 JD의 핵심인 실행 계획과 인덱스 개선은 없습니다."
+    },
+    {
+      "id": "missing-terraform",
+      "jd": "Terraform으로 AWS 인프라를 모듈화하고 코드 리뷰를 통해 변경을 관리한 경험이 필요합니다.",
+      "facts": ["React와 TypeScript로 고객용 예약 화면을 개발했습니다.", "Figma 시안을 구현하고 폼 검증을 추가했습니다."],
+      "expected": "missing",
+      "why": "프론트엔드 경험만 언급되어 Terraform이나 인프라 코드 관련 근거가 없습니다."
+    },
+    {
+      "id": "missing-go",
+      "jd": "Go로 동시성 높은 HTTP 서비스를 개발하고 프로파일링한 경험을 찾습니다.",
+      "facts": ["Java와 Spring MVC로 사내 결재 API를 유지보수했습니다.", "요청 검증과 오류 응답 형식을 정리했습니다."],
+      "expected": "missing",
+      "why": "서버 개발 경험은 있지만 Go 사용이나 동시성·프로파일링 경험은 언급되지 않았습니다."
+    },
+    {
+      "id": "missing-figma",
+      "jd": "Figma에서 디자인 시스템을 정리하고 프로토타입을 협업에 활용한 경험이 필요합니다.",
+      "facts": ["PostgreSQL 스키마 변경 스크립트를 작성하고 백엔드 배포를 지원했습니다.", "서비스 로그의 민감 값을 마스킹했습니다."],
+      "expected": "missing",
+      "why": "백엔드·데이터 작업만 있어 Figma나 디자인 시스템 관련 내용이 없습니다."
+    },
+    {
+      "id": "missing-kafka",
+      "jd": "Kafka consumer group과 offset 관리를 포함한 메시지 처리 시스템을 운영한 경험을 찾습니다.",
+      "facts": ["Redis를 세션 저장소로 사용하고 키 만료 시간을 설정했습니다.", "세션 조회 오류를 로그로 추적했습니다."],
+      "expected": "missing",
+      "why": "캐시 기술은 언급되지만 Kafka 또는 메시지 소비 운영 경험은 없습니다."
+    },
+    {
+      "id": "missing-swift",
+      "jd": "Swift와 SwiftUI로 iOS 앱을 출시하고 앱스토어 심사 대응을 한 경험이 요구됩니다.",
+      "facts": ["Kotlin으로 Android 앱의 설정 화면과 로컬 알림을 구현했습니다.", "Play 스토어 배포 전 기기별 레이아웃을 확인했습니다."],
+      "expected": "missing",
+      "why": "모바일 개발 경험은 있으나 iOS·Swift 관련 경험은 나오지 않습니다."
+    },
+    {
+      "id": "missing-elasticsearch",
+      "jd": "Elasticsearch 인덱스와 검색어 분석기를 구성해 검색 품질을 개선한 경험이 필요합니다.",
+      "facts": ["PostgreSQL에서 상품과 카테고리 테이블을 조인해 관리자 목록을 만들었습니다.", "CSV 내보내기 기능도 추가했습니다."],
+      "expected": "missing",
+      "why": "관계형 데이터 조회 경험만 있고 Elasticsearch 검색 구축 경험은 없습니다."
+    },
+    {
+      "id": "missing-laravel",
+      "jd": "PHP와 Laravel로 멀티테넌트 웹 애플리케이션을 설계한 경험을 찾습니다.",
+      "facts": ["Node.js와 Express로 단일 테넌트 사내 알림 API를 만들었습니다.", "서비스 설정을 환경 변수로 분리했습니다."],
+      "expected": "missing",
+      "why": "웹 백엔드 경험은 있지만 PHP·Laravel이나 멀티테넌트 설계는 언급되지 않았습니다."
+    },
+    {
+      "id": "missing-docker-empty",
+      "jd": "Docker 컨테이너 이미지를 직접 만들고 배포 환경에서 운영한 경험이 필요합니다.",
+      "facts": [],
+      "expected": "missing",
+      "why": "제공된 이력서 사실이 없어 Docker 경험을 뒷받침하는 내용이 없습니다."
+    }
+  ]
+}
