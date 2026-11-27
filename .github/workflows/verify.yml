@@ -26,7 +26,7 @@ jobs:
       - run: docker compose up -d --build
       - name: Exercise container worker and document preview
         run: |
-          curl -fsS --retry 12 --retry-connrefused --retry-delay 1 http://127.0.0.1:8765/ > /dev/null
+          curl -fsS --max-time 3 --retry 15 --retry-all-errors --retry-delay 1 http://127.0.0.1:8765/ > /dev/null
           python scripts/container_smoke.py
       - if: failure()
         run: docker compose logs
