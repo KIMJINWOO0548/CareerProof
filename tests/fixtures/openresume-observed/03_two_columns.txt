@@ -1,0 +1,7 @@
+FICTIONAL TWO COLUMN RESUME
+EXPERIENCE
+Orbit simulator: 23 checks.
+Maple parser: 9 edge cases.
+SKILLS
+Python and SQL practice.
+Rust sandbox: 4 modules.

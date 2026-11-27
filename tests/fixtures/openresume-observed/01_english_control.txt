@@ -1,0 +1,4 @@
+FICTIONAL RESUME - Mira Vale
+Project Aurora: shipped 17 regression checks.
+Reduced sandbox latency from 240 ms to 180 ms.
+Evidence ID: AURORA-17; all facts are invented.

@@ -96,14 +96,18 @@ export function matchRequirements(workspace, requirements = parseJobDescription(
     // An approved sentence does not establish a new skill absent from its linked facts.
     for (const fact of linked) evidence.push({ ...fact, text: revision.text, supportedTerms: termsIn(fact.text), performedTerms: performedTerms(fact.text), source: `확정본: ${question.title} · ${fact.source}`, revisionId: revision.id });
   }
-  const indexed = [...evidence, ...mentions].map(item => ({ item, terms: termsIn(item.text).filter(t => !item.supportedTerms || item.supportedTerms.includes(t)) }));
+  const indexed = [...evidence, ...mentions].map(item => {
+    const terms = termsIn(item.text).filter(term => !item.supportedTerms || item.supportedTerms.includes(term));
+    const actions = item.verified && terms.length ? performedTerms(item.text) : [];
+    const supportedActions = actions.filter(term => !item.performedTerms || item.performedTerms.includes(term));
+    return { item, terms, supportedActions };
+  });
   return requirements.map(requirement => {
     const terms = requirement.terms;
-    const matches = indexed.flatMap(({ item, terms: observed }) => {
+    const matches = indexed.flatMap(({ item, terms: observed, supportedActions }) => {
       const matched = terms.filter(term => observed.includes(term));
       if (!matched.length) return [];
-      const supportedActions = performedTerms(item.text).filter(term => !item.performedTerms || item.performedTerms.includes(term));
-      const strongTerms = item.verified ? matched.filter(term => supportedActions.includes(term)) : [];
+      const strongTerms = matched.filter(term => supportedActions.includes(term));
       return [{ ...item, matchedTerms: matched, strongTerms, strong: strongTerms.length === matched.length, span: sourceSpan(item.text, 0, item.text.length, item.source, item.page ?? null) }];
     });
     const coveredTerms = terms.filter(term => matches.some(m => m.strongTerms.includes(term)));

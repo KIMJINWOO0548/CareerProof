@@ -1,0 +1,95 @@
+{
+  "url": "https://www.open-resume.com/resume-parser",
+  "started_utc": "2026-11-27T16:36:29.353Z",
+  "browser": "Chrome 158.0.8127.38",
+  "manifest_sha256": "5c797aa7c13ac12be530d81ba53e28f04b230d4ac1c392484ffc86db7e3273be",
+  "surface": "Step 2. Group text items into lines, first exact Line Content column",
+  "network": "Fresh browser context per PDF, default example warmed first, then HTTP(S) routes blocked and browser offline before choosing the local file",
+  "fixtures": [
+    {
+      "id": "01_english_control",
+      "filename": "01_english_control.pdf",
+      "kind": "selectable",
+      "sha256": "e90297a7cba116836dfaa595e583386204e8ae848c73cb24c29ff7de8fd1de52",
+      "started_utc": "2026-11-27T16:36:29.365Z",
+      "status": "observed",
+      "line_count": 4,
+      "transcript_sha256": "02393f46de279f28d2f0629fa7e2ee3172dc01617f626ce2382b1108e50707c3",
+      "parser_assets": [
+        "/_next/static/chunks/app/resume-parser/page-0466c57ad89e3226.js"
+      ],
+      "page_errors": []
+    },
+    {
+      "id": "02_korean_technical",
+      "filename": "02_korean_technical.pdf",
+      "kind": "selectable",
+      "sha256": "8410897a344c2f32623d28f7c49f2d0a5eb4ab5bae5d67f6625f68d7319c12b7",
+      "started_utc": "2026-11-27T16:36:30.409Z",
+      "status": "observed",
+      "line_count": 4,
+      "transcript_sha256": "710c9a259dafd8abb1b0f06175f6e4ef542b2e5595d9cdac26a0c47ba49e6ea8",
+      "parser_assets": [
+        "/_next/static/chunks/app/resume-parser/page-0466c57ad89e3226.js"
+      ],
+      "page_errors": []
+    },
+    {
+      "id": "03_two_columns",
+      "filename": "03_two_columns.pdf",
+      "kind": "selectable",
+      "sha256": "7dba440a8dd78bb1cab6401ab99e281c7eb8887bace6a11f6edc63e3d86e01c1",
+      "started_utc": "2026-11-27T16:36:31.372Z",
+      "status": "observed",
+      "line_count": 7,
+      "transcript_sha256": "4912c157afca9828ef61bd742c55f0c39aa7a14e376db864feebfe9deb8c7fac",
+      "parser_assets": [
+        "/_next/static/chunks/app/resume-parser/page-0466c57ad89e3226.js"
+      ],
+      "page_errors": []
+    },
+    {
+      "id": "04_multipage",
+      "filename": "04_multipage.pdf",
+      "kind": "selectable",
+      "sha256": "e1a4d6e9c2030659cff2b1726ea2c86171ed7623f578a1fd609f955c69394688",
+      "started_utc": "2026-11-27T16:36:32.337Z",
+      "status": "observed",
+      "line_count": 5,
+      "transcript_sha256": "ca9d305c0606ba6d244afac213c6d77894ffa717a395c3a010d57c1379271615",
+      "parser_assets": [
+        "/_next/static/chunks/app/resume-parser/page-0466c57ad89e3226.js"
+      ],
+      "page_errors": []
+    },
+    {
+      "id": "05_technical_symbols",
+      "filename": "05_technical_symbols.pdf",
+      "kind": "selectable",
+      "sha256": "18606d4125601ecccc4dc8f8411417acd30f9e25e3193b0c6ea4f97724f9b7af",
+      "started_utc": "2026-11-27T16:36:33.344Z",
+      "status": "observed",
+      "line_count": 5,
+      "transcript_sha256": "5fbd05032e7d356bcbc0237a8bc205b6dfebfee5e023b00bf728c483f6f061c8",
+      "parser_assets": [
+        "/_next/static/chunks/app/resume-parser/page-0466c57ad89e3226.js"
+      ],
+      "page_errors": []
+    },
+    {
+      "id": "06_image_only",
+      "filename": "06_image_only.pdf",
+      "kind": "image_only",
+      "sha256": "c6d5af513cde606684cc403859361d05b17578082f3d898d1c86f01a350ade26",
+      "started_utc": "2026-11-27T16:36:34.332Z",
+      "status": "abstained",
+      "line_count": 0,
+      "transcript_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "parser_assets": [
+        "/_next/static/chunks/app/resume-parser/page-0466c57ad89e3226.js"
+      ],
+      "page_errors": []
+    }
+  ],
+  "finished_utc": "2026-11-27T16:36:35.436Z"
+}

@@ -1,0 +1,5 @@
+FICTIONAL TECHNICAL NOTES
+C++ / C# / SQL: 42 synthetic cases.
+p95=12.5ms; error_rate < 0.7%; batch_size=64.
+API v2.4: /sandbox/check?mode=dry-run
+Trace code: ZEPHYR_0042; owner: fictional.
