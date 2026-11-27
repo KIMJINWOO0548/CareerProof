@@ -15,7 +15,7 @@ EVENTS = {"run_state", "iteration_start", "best_updated", "gate_rejected",
 REASONS = {"user", "target_reached", "max_iter", "stagnated", "needs_user_input",
            "user_stop", "cancelled", "key_required", "budget_limit", "invalid_request",
            "provider_error", "cost_unknown", "length", "evidence", "preservation",
-           "no_improvement", "invalid_candidate", "settled", "none"}
+           "no_improvement", "invalid_candidate", "settled", "none", "input_required"}
 EVENT_FIELDS = {"seq", "type", "phase", "reason", "iteration", "spentMicros"}
 RUN_ID = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 EVENT_LIMIT = 1024
@@ -43,6 +43,7 @@ class History:
     def __init__(self, path=":memory:"):
         self.condition = Condition()
         self.closed = False
+        self.live_worker_ids = set()
         self.secret = secrets.token_bytes(32)
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
@@ -59,9 +60,50 @@ class History:
                 PRIMARY KEY(owner_id, run_id, seq),
                 FOREIGN KEY(owner_id, run_id) REFERENCES runs(owner_id, id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS worker_runs (
+                owner_id TEXT NOT NULL, run_id TEXT NOT NULL, provider TEXT NOT NULL,
+                dispatch_pending INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(owner_id,run_id),
+                FOREIGN KEY(owner_id,run_id) REFERENCES runs(owner_id,id) ON DELETE CASCADE
+            );
         """)
         with self.db:
             self.db.execute("DELETE FROM runs WHERE created < ?", (int(time.time()) - 30 * 86400,))
+            self._interrupt_lost_workers()
+
+    def _interrupt_lost_workers(self):
+        for marker in self.db.execute("SELECT * FROM worker_runs").fetchall():
+            owner, run = marker["owner_id"], marker["run_id"]
+            last = self.db.execute("""SELECT * FROM run_events WHERE owner_id=? AND run_id=?
+                                      ORDER BY seq DESC LIMIT 1""", (owner, run)).fetchone()
+            seq, phase, iteration, spent = (last["seq"], last["phase"], last["iteration"], last["spentMicros"]) if last else (0, "idle", 0, 0)
+            if marker["dispatch_pending"]:
+                seq += 1
+                self.db.execute("INSERT INTO run_events VALUES (?,?,?,?,?,?,?,?)",
+                                (owner, run, seq, "budget_update", phase, "cost_unknown", iteration, spent))
+                self.db.execute("UPDATE worker_runs SET dispatch_pending=0 WHERE owner_id=? AND run_id=?", (owner, run))
+            if phase not in {"cancelled", "completed"} and not (last and last["reason"] == "input_required"):
+                self.db.execute("INSERT INTO run_events VALUES (?,?,?,?,?,?,?,?)",
+                                (owner, run, seq + 1, "run_state", "paused", "input_required", iteration, spent))
+
+    def _is_worker(self, owner, run):
+        return self.db.execute("SELECT 1 FROM worker_runs WHERE owner_id=? AND run_id=?", (owner, run)).fetchone()
+
+    def open_worker(self, owner, run, provider="ollama"):
+        with self.condition, self.db:
+            if provider not in {"ollama", "anthropic", "openai", "gemini"}:
+                raise HistoryError(422, "실행 모델 설정을 확인하세요.")
+            try:
+                self.db.execute("INSERT INTO runs VALUES (?,?,?)", (owner, run, int(time.time())))
+            except sqlite3.IntegrityError:
+                raise HistoryError(409, "이미 사용한 실행 ID입니다.") from None
+            self.db.execute("INSERT INTO worker_runs(owner_id,run_id,provider) VALUES (?,?,?)", (owner, run, provider))
+            self.live_worker_ids.add((owner, run))
+
+    def mark_dispatch(self, owner, run):
+        with self.condition, self.db:
+            self.require(owner, run)
+            self.db.execute("UPDATE worker_runs SET dispatch_pending=1 WHERE owner_id=? AND run_id=?", (owner, run))
 
     def close(self):
         with self.condition:
@@ -71,6 +113,8 @@ class History:
 
     def open_run(self, owner, run):
         with self.condition, self.db:
+            if self._is_worker(owner, run):
+                raise HistoryError(409, "서버가 관리하는 실행 기록입니다.")
             now = int(time.time())
             self.db.execute("DELETE FROM runs WHERE created < ?", (now - 30 * 86400,))
             self.db.execute("INSERT OR IGNORE INTO runs VALUES (?, ?, ?)", (owner, run, now))
@@ -92,12 +136,14 @@ class History:
             """, (owner,))
             return [dict(row) for row in rows]
 
-    def append(self, owner, run, items):
+    def append(self, owner, run, items, *, client=False):
         if not isinstance(items, list) or not 1 <= len(items) <= 128:
             raise HistoryError(422, "실행 이벤트 수를 확인하세요.")
         values = [validate_event(item) for item in items]
         with self.condition, self.db:
             self.require(owner, run)
+            if client and self._is_worker(owner, run):
+                raise HistoryError(409, "서버가 관리하는 실행 기록입니다.")
             tail = self.db.execute("SELECT COALESCE(MAX(seq),0) FROM run_events WHERE owner_id=? AND run_id=?",
                                    (owner, run)).fetchone()[0]
             for row in values:
@@ -111,6 +157,8 @@ class History:
                 if seq != tail + 1:
                     raise HistoryError(409, "이전 순번의 실행 기록이 필요합니다.")
                 self.db.execute("INSERT INTO run_events VALUES (?,?,?,?,?,?,?,?)", (owner, run, *row))
+                if row[1] == "budget_update":
+                    self.db.execute("UPDATE worker_runs SET dispatch_pending=0 WHERE owner_id=? AND run_id=?", (owner, run))
                 tail = seq
             self.condition.notify_all()
             return tail
@@ -148,7 +196,25 @@ class History:
                 rows = fetch()
             return rows
 
-    def delete(self, owner, run):
+    def delete(self, owner, run, *, client=False):
         with self.condition, self.db:
+            if client and (owner, run) in self.live_worker_ids:
+                raise HistoryError(409, "서버 작업 목록에서 해당 실행을 삭제하세요.")
             self.db.execute("DELETE FROM runs WHERE owner_id=? AND id=?", (owner, run))
+            self.live_worker_ids.discard((owner, run))
             self.condition.notify_all()
+
+    def erase_owner(self, owner):
+        """Erase every owned row, including records outside the list's 30-row window."""
+        with self.condition, self.db:
+            pending = self.db.execute("""
+                SELECT 1 FROM runs r WHERE r.owner_id=? AND (
+                  EXISTS (SELECT 1 FROM worker_runs w WHERE w.owner_id=r.owner_id
+                    AND w.run_id=r.id AND w.dispatch_pending=1)) LIMIT 1
+            """, (owner,)).fetchone()
+            if pending:
+                raise HistoryError(409, "진행 중인 실행을 종료하거나 취소하고 사용량 정산이 끝날 때까지 기다린 뒤 삭제하세요.")
+            count = self.db.execute("DELETE FROM runs WHERE owner_id=?", (owner,)).rowcount
+            self.live_worker_ids = {key for key in self.live_worker_ids if key[0] != owner}
+            self.condition.notify_all()
+            return count

@@ -318,6 +318,11 @@ class LocalHTTPTests(unittest.TestCase):
             ("/", "text/html"), ("/index.html", "text/html"), ("/app.css", "text/css"),
             ("/design.css", "text/css"), ("/app.js", "text/javascript"),
             ("/analysis.js", "text/javascript"), ("/workspace.js", "text/javascript"),
+            ("/rubric.json", "application/json"), ("/committee-ui.js", "text/javascript"),
+            ("/demo.js", "text/javascript"), ("/remote-runs.js", "text/javascript"),
+            ("/research-ui.js", "text/javascript"), ("/research.js", "text/javascript"),
+            ("/style-tools.js", "text/javascript"), ("/review.css", "text/css"),
+            ("/research.css", "text/css"),
         ]:
             with self.subTest(path=path):
                 status, headers, body = self.request("GET", path)

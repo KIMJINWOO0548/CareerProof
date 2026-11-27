@@ -128,11 +128,11 @@ function copyDraft(draft) {
 /** One tab coordinates bounded requests. Proposals never change editor or approval pointers. */
 export function createLoop({ workspace, question, initial, maxIterations, target = null,
   budgetUsd, provider, generate, onChange = () => {} }) {
-  const cloud = provider === 'anthropic';
+  const cloud = ['anthropic', 'openai', 'gemini'].includes(provider);
   const limit = cloud ? microdollars(budgetUsd) : 0;
   if (!Number.isInteger(maxIterations) || maxIterations < 1 || maxIterations > 10
       || (target !== null && (!Number.isInteger(target) || target < 0 || target > 100))
-      || !['ollama', 'anthropic'].includes(provider) || (cloud && (!limit || limit > 1_000_000))
+      || !['ollama', 'anthropic', 'openai', 'gemini'].includes(provider) || (cloud && (!limit || limit > 1_000_000))
       || !['self_intro', 'career_desc'].includes(question.kind) || typeof initial?.text !== 'string')
     fail('invalid_request', '반복 횟수(1~10), 목표 점수, 문서 종류와 실행 예산을 확인해 주세요.');
   let facts = selectedFacts(workspace, initial.factIds);

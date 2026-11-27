@@ -121,7 +121,8 @@ class DraftReceipts:
         except Exception:
             # Keep a tombstone when dispatch cannot be ruled out; never cache tracebacks or input.
             status = 502
-            code = "cost_unknown" if isinstance(data, dict) and data.get("provider") == "anthropic" else "provider_error"
+            cloud = isinstance(data, dict) and data.get("provider") in {"anthropic", "openai", "gemini"}
+            code = "cost_unknown" if cloud else "provider_error"
             payload = json.dumps({"message": "초안 요청의 처리 결과를 확인할 수 없습니다.", "code": code, "usage": None})
         with self._lock:
             record.payload = payload

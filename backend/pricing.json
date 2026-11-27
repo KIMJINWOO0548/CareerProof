@@ -3,5 +3,28 @@
   "source": "https://platform.claude.com/docs/en/models/haiku-4-5/overview",
   "model": "claude-haiku-4-5-20251001",
   "usd_per_million_input": "1",
-  "usd_per_million_output": "5"
+  "usd_per_million_output": "5",
+  "providers": {
+    "anthropic": {
+      "as_of": "2026-11-27",
+      "source": "https://platform.claude.com/docs/en/models/haiku-4-5/overview",
+      "model": "claude-haiku-4-5-20251001",
+      "usd_per_million_input": "1",
+      "usd_per_million_output": "5"
+    },
+    "openai": {
+      "as_of": "2026-11-28",
+      "source": "https://developers.openai.com/api/docs/models/gpt-4.1-mini",
+      "model": "gpt-4.1-mini-2025-04-14",
+      "usd_per_million_input": "0.40",
+      "usd_per_million_output": "1.60"
+    },
+    "gemini": {
+      "as_of": "2026-11-28",
+      "source": "https://ai.google.dev/gemini-api/docs/pricing#gemini-2.5-flash-lite",
+      "model": "gemini-2.5-flash-lite",
+      "usd_per_million_input": "0.10",
+      "usd_per_million_output": "0.40"
+    }
+  }
 }

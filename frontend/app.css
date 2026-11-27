@@ -94,3 +94,17 @@ dialog .form-flow { margin-top: 12px; }
 #history-events { max-height: 18rem; overflow-y: auto; margin: 0; padding-inline-start: 2rem; }
 #history-events:empty { display: none; }
 #history-events li { margin-block: .35rem; }
+#server-runs { margin-top: 18px; }
+#server-runs .form-flow { margin-top: 12px; }
+#worker-choice { max-width: 100%; }
+.print-context { display: none; }
+@media print {
+  main.page > :not(#stage) { display: none !important; }
+  .sidebar, .topbar, .page-head, #status, .rail, #server-runs, #run-history,
+  .printable button, .printable .badge, .printable .revision-tag { display: none !important; }
+  .app-shell, .main-area, .page, .grid-main { display: block; margin: 0; padding: 0; }
+  .printable { border: 0; box-shadow: none; padding: 0; }
+  .print-context { display: block; margin-bottom: 1em; }
+  .printable h3 { break-after: avoid; }
+  .printable .plain-output { color: black; margin-block: .6em 1.6em; }
+}

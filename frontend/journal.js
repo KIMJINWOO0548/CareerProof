@@ -6,7 +6,7 @@ const reasonNames = {none:"", user:"사용자 요청", target_reached:"목표 �
   stagnated:"개선 정체", needs_user_input:"근거 보강 필요", user_stop:"사용자가 종료", cancelled:"사용자가 취소",
   key_required:"키 확인 필요", budget_limit:"예산 한도", invalid_request:"입력 확인 필요", provider_error:"제공자 오류",
   cost_unknown:"과금 미확인", length:"분량 제한", evidence:"근거 불일치", preservation:"필수 근거 누락",
-  no_improvement:"개선 없음", invalid_candidate:"후보 형식 오류", settled:"사용량 정산"};
+  no_improvement:"개선 없음", invalid_candidate:"후보 형식 오류", settled:"사용량 정산", input_required:"서버 재시작 · 작업 JSON 복원 필요"};
 const root = "/api/history";
 let session;
 const writers = new Set();
@@ -28,7 +28,7 @@ function post(path, data = {}, signal) {
   });
 }
 
-function ensureSession() {
+export function ensureSession() {
   if (!session) {
     const initialize = () => post("/session");
     const opening = navigator.locks ? navigator.locks.request("careerproof-history-session", initialize) : initialize();
@@ -43,6 +43,11 @@ export function eventMetadata(event, state) {
     reason:Object.hasOwn(reasonNames, event.reason) ? event.reason : "none",
     iteration:event.iteration ?? state.iteration, spentMicros:Math.round(state.spentUsd * 1_000_000),
   };
+}
+
+export async function flushRunJournals() {
+  await Promise.all([...writers].map(flush => flush()));
+  if (writers.size) throw new Error("실행 기록 저장을 기다리고 있습니다. 잠시 후 다시 삭제하세요.");
 }
 
 export function createRunJournal() {

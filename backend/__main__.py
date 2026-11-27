@@ -15,6 +15,9 @@ from urllib.parse import urlsplit
 from .drafts import DraftError, make_draft
 from .history import EVENT_LIMIT, RUN_ID, History, HistoryError
 from .receipts import DraftReceipts
+from .workers import WorkerManager, WorkerError
+from .evidence import extract_document, repo_signals, dart_company
+from .committee import review_application
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = {
@@ -28,28 +31,44 @@ ASSETS = {
     "/calibration.js": ("frontend/calibration.js", "text/javascript"),
     "/loop.js": ("frontend/loop.js", "text/javascript"),
     "/journal.js": ("frontend/journal.js", "text/javascript"),
+    "/remote-runs.js": ("frontend/remote-runs.js", "text/javascript"),
+    "/research.js": ("frontend/research.js", "text/javascript"),
+    "/demo.js": ("frontend/demo.js", "text/javascript"),
+    "/style-tools.js": ("frontend/style-tools.js", "text/javascript"),
+    "/research-ui.js": ("frontend/research-ui.js", "text/javascript"),
+    "/committee-ui.js": ("frontend/committee-ui.js", "text/javascript"),
+    "/rubric.json": ("frontend/rubric.json", "application/json"),
+    "/review.css": ("frontend/review.css", "text/css"),
+    "/research.css": ("frontend/research.css", "text/css"),
 }
 BODY_LIMIT = 1024 * 1024
 
 
 class LocalApp(ThreadingHTTPServer):
-    def __init__(self, address, draft=make_draft, history_path=":memory:"):
+    def __init__(self, address, draft=make_draft, history_path=":memory:", review=review_application):
         super().__init__(address, Handler)
         self.draft = draft
+        self.review = review
         self.draft_slot = BoundedSemaphore(1)
         self.history = History(history_path)
         self.receipts = DraftReceipts()
+        self.workers = WorkerManager(self.history, self.generate)
 
     def generate(self, data, key):
+        return self.model_request(self.draft, data, key)
+
+    def model_request(self, operation, data, key):
         if not self.draft_slot.acquire(blocking=False):
             raise DraftError(409, "다른 초안 요청을 처리 중입니다.", "provider_busy")
         try:
-            return self.draft(data, key)
+            return operation(data, key)
         finally:
             self.draft_slot.release()
 
     def server_close(self):
         super().server_close()
+        if hasattr(self, "workers"):
+            self.workers.close()
         if hasattr(self, "history"):
             self.history.close()
         if hasattr(self, "receipts"):
@@ -108,7 +127,9 @@ class Handler(BaseHTTPRequestHandler):
             if not initialize:
                 raise HistoryError(401, "로컬 기록 세션을 다시 여세요.")
             token = secrets.token_hex(32)
-            cookie = f"{name}={token}; HttpOnly; SameSite=Strict; Path=/api/history; Max-Age=2592000"
+        if initialize:
+            # Renew an existing pre-worker cookie under /api as well. Its digest is stable.
+            cookie = f"{name}={token}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=2592000"
         return hashlib.sha256(token.encode()).hexdigest(), cookie
 
     def history_post(self, data):
@@ -117,6 +138,19 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(200, b"{}", "application/json", cookie)
             return
         owner, _ = self.history_owner()
+        if self.path == "/api/history/erase":
+            if data != {"confirm": "erase-browser-workspace"}:
+                raise HistoryError(422, "전체 삭제 확인이 필요합니다.")
+            # Draft/committee receipts predate owner sessions. Do not discard or
+            # hide a request while its provider charge may still be arriving.
+            if not self.server.draft_slot.acquire(blocking=False):
+                raise HistoryError(409, "초안·위원회 요청이 진행 중입니다. 응답과 사용량 정산이 끝난 뒤 삭제하세요.")
+            try:
+                count = self.server.workers.erase_owner(owner)
+            finally:
+                self.server.draft_slot.release()
+            self.respond_json(200, {"deleted": True, "runs": count, "receiptTtlSeconds": 600})
+            return
         match = re.fullmatch(rf"/api/history/({RUN_ID})/(open|append|ticket|delete)", self.path)
         if not match:
             raise HistoryError(404, "기록 경로를 찾을 수 없습니다.")
@@ -125,9 +159,9 @@ class Handler(BaseHTTPRequestHandler):
             self.server.history.open_run(owner, run)
             result = {}
         elif op == "append":
-            result = {"lastSeq": self.server.history.append(owner, run, data)}
+            result = {"lastSeq": self.server.history.append(owner, run, data, client=True)}
         elif op == "delete":
-            self.server.history.delete(owner, run)
+            self.server.history.delete(owner, run, client=True)
             result = {}
         else:
             result = {"token": self.server.history.ticket(owner, run)}
@@ -151,13 +185,46 @@ class Handler(BaseHTTPRequestHandler):
         batch = "".join(f"id: {row['seq']}\nevent: run_event\ndata: {json.dumps(row)}\n\n" for row in rows)
         self.respond(200, (batch or ": heartbeat\n\n").encode(), "text/event-stream")
 
+    def workers_get(self):
+        owner, _ = self.history_owner()
+        manager = self.server.workers
+        if self.path == "/api/runs":
+            self.respond_json(200, {"available": manager.available, "runs": manager.list(owner)})
+            return
+        match = re.fullmatch(rf"/api/runs/({RUN_ID})(\?state=1)?", self.path)
+        if not match:
+            raise HistoryError(404, "실행을 찾을 수 없습니다.")
+        snap = manager.get(owner, match[1], summary=bool(match[2]))
+        self.respond_json(200, snap)
+
+    def workers_post(self, data):
+        owner, _ = self.history_owner()
+        if not isinstance(data, dict):
+            raise HistoryError(422, "실행 설정은 JSON 객체로 입력하세요.")
+        manager = self.server.workers
+        key = self.headers.get("X-LLM-API-Key")
+        if self.path == "/api/runs":
+            result = manager.create(owner, data, key)
+        else:
+            match = re.fullmatch(rf"/api/runs/({RUN_ID})/(commands|delete)", self.path)
+            if not match:
+                raise HistoryError(404, "실행 경로를 찾을 수 없습니다.")
+            result = (manager.command(owner, match[1], data, key) if match[2] == "commands"
+                      else manager.delete(owner, match[1], data))
+        self.respond_json(200, result or {})
+
     def do_GET(self):
         if not self.valid_host():
             self.respond_json(403, {"error": "로컬 작업 주소를 사용하세요."})
             return
-        if self.command == "GET" and (self.path == "/api/history" or self.path.startswith("/api/history/")):
+        if self.command == "GET" and self.path.startswith(("/api/history", "/api/runs")):
             try:
-                self.history_get()
+                if self.path.startswith("/api/runs"):
+                    self.workers_get()
+                else:
+                    self.history_get()
+            except WorkerError as error:
+                self.respond_json(error.status, {"error": str(error), "code": error.code})
             except HistoryError as error:
                 self.respond_json(error.status, {"error": str(error)})
             except sqlite3.Error:
@@ -177,7 +244,9 @@ class Handler(BaseHTTPRequestHandler):
             if not self.valid_host() or self.headers.get("Origin") != "http://" + self.headers["Host"]:
                 raise DraftError(403, "현재 로컬 작업 화면에서 요청하세요.")
             history = self.path.startswith("/api/history/")
-            if self.path != "/api/draft" and not history:
+            workers = self.path == "/api/runs" or self.path.startswith("/api/runs/")
+            evidence = self.path in {"/api/extract", "/api/github", "/api/dart"}
+            if self.path not in {"/api/draft", "/api/committee"} and not history and not workers and not evidence:
                 raise DraftError(404, "요청 경로를 찾을 수 없습니다.")
             if self.headers.get("X-CareerProof-Request") != "1":
                 raise DraftError(403, "초안 요청을 확인할 수 없습니다.")
@@ -187,7 +256,8 @@ class Handler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 raise DraftError(400, "요청 크기가 올바르지 않습니다.") from None
-            if not 0 < length <= BODY_LIMIT:
+            limit = 10 * 1024 * 1024 if workers or self.path == "/api/extract" else BODY_LIMIT
+            if not 0 < length <= limit:
                 raise DraftError(413, "초안 요청 크기를 줄이세요.")
             try:
                 data = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -196,10 +266,28 @@ class Handler(BaseHTTPRequestHandler):
             if history:
                 self.history_post(data)
                 return
+            if workers:
+                self.workers_post(data)
+                return
+            if evidence:
+                if self.path == "/api/extract":
+                    result = extract_document(data)
+                elif self.path == "/api/github":
+                    result = repo_signals(data)
+                else:
+                    result = dart_company(data, self.headers.get("X-DART-API-Key"))
+                self.respond_json(200, result)
+                return
             key = self.headers.get("X-LLM-API-Key")
-            result = self.server.receipts.execute(self.headers.get("X-CareerProof-Command"), data, key,
-                                                  lambda: self.server.generate(data, key))
+            if not isinstance(data, dict):
+                raise DraftError(422, "요청 항목을 JSON 객체로 입력하세요.")
+            operation = self.server.review if self.path == "/api/committee" else self.server.draft
+            identity = {"route": self.path, "provider": data.get("provider"), "payload": data}
+            result = self.server.receipts.execute(self.headers.get("X-CareerProof-Command"), identity, key,
+                                                  lambda: self.server.model_request(operation, data, key))
             self.respond_json(HTTPStatus.OK, result)
+        except WorkerError as error:
+            self.respond_json(error.status, {"error": str(error), "code": error.code})
         except DraftError as error:
             payload = {"error": str(error), "code": error.code}
             if error.usage is not None:

@@ -5,10 +5,11 @@ import json
 import os
 import re
 import secrets
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
 
 PRICING = json.loads(Path(__file__).with_name("pricing.json").read_text(encoding="utf-8"))
+CLOUD_PROVIDERS = tuple(PRICING["providers"])
 MAX_OUTPUT = 1200
 MAX_RESPONSE_BYTES = 1024 * 1024
 FACT_ID = re.compile(r"[A-Za-z0-9_-]{1,100}")
@@ -49,15 +50,24 @@ class DraftError(Exception):
 
 def request_json(provider, path, data, key=None):
     # Once a paid request leaves the process, a broken response cannot prove zero cost.
-    uncertain = "cost_unknown" if provider == "anthropic" and path == "/v1/messages" else "provider_error"
+    uncertain = "cost_unknown" if provider in CLOUD_PROVIDERS and not path.endswith(("count_tokens", "countTokens")) else "provider_error"
     if provider == "ollama":
         host = "host.docker.internal" if os.environ.get("CAREERPROOF_CONTAINER") == "1" else "127.0.0.1"
         connection = http.client.HTTPConnection(host, 11434, timeout=60)
     else:
-        connection = http.client.HTTPSConnection("api.anthropic.com", timeout=60)
+        hosts = {"anthropic": "api.anthropic.com", "openai": "api.openai.com",
+                 "gemini": "generativelanguage.googleapis.com"}
+        if provider not in hosts:
+            raise DraftError(422, "지원하는 제공자를 선택하세요.")
+        connection = http.client.HTTPSConnection(hosts[provider], timeout=60)
     headers = {"Content-Type": "application/json"}
     if key is not None:
-        headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
+        if provider == "anthropic":
+            headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
+        elif provider == "openai":
+            headers["Authorization"] = "Bearer " + key
+        elif provider == "gemini":
+            headers["x-goog-api-key"] = key
     try:
         connection.request("POST", path, json.dumps(data, ensure_ascii=False).encode(), headers)
         response = connection.getresponse()
@@ -182,9 +192,12 @@ def parse_candidate(raw, allowed_ids, restore):
         raise DraftError(502, "초안 형식 또는 근거 ID를 검증할 수 없습니다. 편집본을 유지합니다.") from None
 
 
-def usage_cost(inputs, outputs):
-    return (inputs * Decimal(PRICING["usd_per_million_input"])
-            + outputs * Decimal(PRICING["usd_per_million_output"])) / 1_000_000
+def usage_cost(inputs, outputs, provider="anthropic"):
+    price = PRICING["providers"][provider]
+    # Conservative whole-microdollar receipts keep loop budget arithmetic exact.
+    cost = (inputs * Decimal(price["usd_per_million_input"])
+            + outputs * Decimal(price["usd_per_million_output"])) / 1_000_000
+    return cost.quantize(Decimal("0.000001"), rounding=ROUND_CEILING)
 
 
 def token_count(value, *, error_code="provider_error"):
@@ -216,6 +229,76 @@ def read_cloud_draft(result, allowed_ids, restore):
     return {**parsed, "usage": usage}
 
 
+def request_cloud_json(provider, model, context, policy, budget, key, schema, max_output, send, *, name="draft"):
+    """Bounded OpenAI/Gemini JSON transport with receipts even on invalid output."""
+    content = json.dumps(context, ensure_ascii=False)
+    if provider == "openai":
+        path = "/v1/chat/completions"
+        body = {"model": model, "store": False, "max_completion_tokens": max_output,
+                "messages": [{"role": "system", "content": policy},
+                             {"role": "user", "content": content}],
+                "response_format": {"type": "json_schema", "json_schema": {
+                    "name": name, "strict": True, "schema": schema}}}
+    else:
+        path = f"/v1beta/models/{model}:generateContent"
+        body = {"systemInstruction": {"parts": [{"text": policy}]},
+                "contents": [{"role": "user", "parts": [{"text": content}]}],
+                "generationConfig": {"maxOutputTokens": max_output,
+                    "thinkingConfig": {"thinkingBudget": 0},
+                    "responseMimeType": "application/json", "responseJsonSchema": schema}}
+    # Text-only input: one token per UTF-8 byte plus ample protocol/schema overhead.
+    # This deliberately overestimates input without a paid preflight request.
+    upper_input = len(json.dumps(body, ensure_ascii=False).encode("utf-8")) + 4096
+    if usage_cost(upper_input, max_output, provider) > budget:
+        raise DraftError(422, "최대 출력까지의 예상 비용이 예산을 초과해 초안 생성을 중지했습니다.", "budget_limit")
+    result = send(provider, path, body, key)
+    reported = result.get("usage" if provider == "openai" else "usageMetadata")
+    if not isinstance(reported, dict):
+        raise DraftError(502, "사용량을 확인할 수 없습니다. 제공자 사용 내역을 확인하세요.", "cost_unknown")
+    inputs = token_count(reported.get("prompt_tokens" if provider == "openai" else "promptTokenCount"), error_code="cost_unknown")
+    outputs = token_count(reported.get("completion_tokens" if provider == "openai" else "candidatesTokenCount"), error_code="cost_unknown")
+    if provider == "gemini":
+        outputs += token_count(reported.get("thoughtsTokenCount", 0), error_code="cost_unknown")
+    usage = {"inputTokens": inputs, "outputTokens": outputs,
+             "costUsd": str(usage_cost(inputs, outputs, provider))}
+    try:
+        choices = result.get("choices" if provider == "openai" else "candidates")
+        if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
+            raise ValueError()
+        choice = choices[0]
+        if provider == "openai":
+            if choice.get("finish_reason") != "stop":
+                raise ValueError()
+            raw = choice["message"]["content"]
+        else:
+            if choice.get("finishReason") != "STOP":
+                raise ValueError()
+            parts = choice["content"]["parts"]
+            if not isinstance(parts, list) or not parts or any(not isinstance(p, dict) or not isinstance(p.get("text"), str) or p.get("thought") for p in parts):
+                raise ValueError()
+            raw = "".join(p["text"] for p in parts)
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError()
+    except DraftError as error:
+        error.usage = usage
+        raise
+    except (KeyError, TypeError, ValueError, UnicodeError, RecursionError):
+        raise DraftError(502, "완전한 JSON 응답을 받지 못했습니다.", usage=usage) from None
+    return parsed, usage
+
+
+def make_other_cloud_draft(provider, model, context, policy, budget, key, allowed_ids, restore, send):
+    raw, usage = request_cloud_json(provider, model, context, policy, budget, key,
+                                    DRAFT_SCHEMA, MAX_OUTPUT, send)
+    try:
+        parsed = parse_candidate(raw, allowed_ids, restore)
+    except DraftError as error:
+        error.usage = usage
+        raise
+    return {**parsed, "usage": usage}
+
+
 def make_draft(data, key=None, send=request_json):
     if not isinstance(data, dict):
         raise DraftError(422, "JSON 객체를 입력하세요.")
@@ -226,8 +309,8 @@ def make_draft(data, key=None, send=request_json):
     allowed_ids = {item["id"] for item in context["facts"]}
     model = text_field(data.get("model"), 120)
     provider = data.get("provider", "ollama")
-    if provider == "anthropic":
-        if model != PRICING["model"] or data.get("confirmed") is not True:
+    if provider in CLOUD_PROVIDERS:
+        if model != PRICING["providers"][provider]["model"] or data.get("confirmed") is not True:
             raise DraftError(422, "클라우드 모델과 전송 동의를 확인하세요.")
         if not key or not re.fullmatch(r"[!-~]{1,512}", key):
             raise DraftError(422, "유효한 BYOK 키를 입력하세요.", "key_required")
@@ -238,6 +321,9 @@ def make_draft(data, key=None, send=request_json):
         except (ValueError, InvalidOperation):
             raise DraftError(422, "요청당 예산은 0달러 초과, 1달러 이하로 입력하세요.") from None
         context, restore = masked_context(context, data.get("redactTerms", []))
+        if provider != "anthropic":
+            return make_other_cloud_draft(provider, model, context, policy, budget, key,
+                                          allowed_ids, restore, send)
         message = {"role": "user", "content": json.dumps(context, ensure_ascii=False)}
         body = {
             "model": model, "system": policy, "messages": [message],

@@ -1,4 +1,5 @@
 import { countText } from "./analysis.js";
+import { validateResearch } from "./research.js";
 
 const FORMAT = "careerproof-workspace";
 const VERSION = 1;
@@ -205,6 +206,44 @@ export function saveRevision(workspace, questionId, { text, factIds, baseRevisio
   return revision;
 }
 
+function validateExternalReview(review, fields) {
+  object(review, fields);
+  string(review.provider, 80, "평가 도구");
+  if (!Number.isInteger(review.score) || review.score < 0 || review.score > 100) fail("외부 점수를 확인해 주세요.");
+  if (review.paragraphScores !== undefined && array(review.paragraphScores, 200).some(score => !Number.isInteger(score) || score < 0 || score > 100)) fail("문단 점수를 확인해 주세요.");
+  const timestamp = new Date(review.createdAt);
+  if (!Number.isFinite(timestamp.getTime()) || timestamp.toISOString() !== review.createdAt) fail("외부 평가 시각을 확인해 주세요.");
+}
+
+function validateExternalReviews(workspace) {
+  if (workspace.externalReviews === undefined) return;
+  const counts = new Map();
+  for (const review of array(workspace.externalReviews, 50000)) {
+    validateExternalReview(review, ["questionId", "revisionId", "provider", "score", "paragraphScores", "createdAt"]);
+    id(review.questionId); id(review.revisionId);
+    const question = find(workspace.questions, review.questionId);
+    find(question.revisions, review.revisionId);
+    const count = (counts.get(review.revisionId) ?? 0) + 1;
+    if (count > 100) fail("리비전당 외부 평가는 최대 100개입니다.");
+    counts.set(review.revisionId, count);
+  }
+}
+
+export function recordExternalReview(workspace, questionId, revisionId, review) {
+  const question = find(workspace.questions, questionId);
+  find(question.revisions, revisionId);
+  object(review, ["provider", "score", "paragraphScores"]);
+  const entry = { questionId, revisionId, provider: typeof review.provider === "string" ? review.provider.trim() : review.provider,
+    score: review.score, paragraphScores: review.paragraphScores === undefined ? [] : structuredClone(review.paragraphScores), createdAt: new Date().toISOString() };
+  // Notes belong to the workspace, never to immutable revision snapshots.
+  const externalReviews = [...(workspace.externalReviews ?? []), entry];
+  const next = { ...workspace, externalReviews };
+  validateExternalReviews(next);
+  serialize(next);
+  workspace.externalReviews = externalReviews;
+  return entry;
+}
+
 // Numeric claims are compared with their units. Human review covers authorship,
 // causality, and free-form claims that cannot be inferred from number matching.
 function numericClaims(text) {
@@ -235,7 +274,16 @@ export function approveRevision(workspace, questionId, revisionId) {
 }
 
 export function backupWorkspace(workspace) {
+  if (workspace.research !== undefined) validateResearch(workspace.research);
+  validateExternalReviews(workspace);
   return serialize(workspace);
+}
+
+export function setResearch(workspace, input) {
+  const research = validateResearch(input);
+  serialize({ ...workspace, research });
+  workspace.research = research;
+  return research;
 }
 
 export function restoreWorkspace(input) {
@@ -247,7 +295,8 @@ export function restoreWorkspace(input) {
   } catch {
     fail("작업 파일의 JSON 형식을 확인해 주세요.");
   }
-  object(workspace, ["format", "version", "company", "role", "facts", "questions"]);
+  object(workspace, ["format", "version", "company", "role", "facts", "questions", "research", "externalReviews"]);
+  if (workspace.research !== undefined) workspace.research = validateResearch(workspace.research);
   if (workspace.format !== FORMAT || workspace.version !== VERSION) fail("지원하는 CareerProof 작업 파일 버전이 아닙니다.");
   string(workspace.company, 200, "회사명");
   string(workspace.role, 200, "직무");
@@ -267,13 +316,22 @@ export function restoreWorkspace(input) {
     question.rule = checkedRule(question.limit, question.rule);
     let parentId = null;
     for (const revision of array(question.revisions, MAX_REVISIONS)) {
-      object(revision, ["id", "parentId", "text", "factIds", "createdAt"]);
+      object(revision, ["id", "parentId", "text", "factIds", "createdAt", "externalReviews"]);
       id(revision.id);
       if (parentId !== revision.parentId || revisionIds.has(revision.id)) fail("리비전 이력 연결을 확인해 주세요.");
       revisionIds.add(revision.id);
       parentId = revision.id;
       string(revision.text, MAX_TEXT, "본문", true);
       linkedFacts(workspace, revision.factIds);
+      // Migrate the unreleased annotation shape without changing official v1 backups.
+      if (revision.externalReviews !== undefined) {
+        for (const review of array(revision.externalReviews, 100)) {
+          validateExternalReview(review, ["provider", "score", "paragraphScores", "createdAt"]);
+          if (workspace.externalReviews === undefined) workspace.externalReviews = [];
+          array(workspace.externalReviews, 50000).push({ ...review, questionId: question.id, revisionId: revision.id });
+        }
+        delete revision.externalReviews;
+      }
       const timestamp = new Date(revision.createdAt);
       if (!Number.isFinite(timestamp.getTime()) || timestamp.toISOString() !== revision.createdAt) fail("리비전 생성 시각을 확인해 주세요.");
     }
@@ -282,6 +340,7 @@ export function restoreWorkspace(input) {
       checkApproval(workspace, question, find(question.revisions, question.approvedRevisionId));
     }
   }
+  validateExternalReviews(workspace);
   serialize(workspace);
   return workspace;
 }

@@ -1,0 +1,17 @@
+.committee { max-width: 1100px; }
+.committee-fields { border: 0; padding: 0; margin: 0; display: grid; gap: 16px; min-width: 0; }
+.committee-fields legend { font-weight: 650; margin-bottom: 14px; }
+.committee-fields:disabled { opacity: .7; }
+.committee-materials { max-height: 24rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--tint, #f4f5f3); font-size: 13px; }
+.committee-personas { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,285px),1fr)); gap: 16px; margin-top: 20px; }
+.committee-persona { border: 1px solid var(--line,#d9dee0); border-radius: 6px; padding: 16px; min-width: 0; }
+.committee-score { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.committee-persona-score { font-size: 22px; font-variant-numeric: tabular-nums; }
+.committee-warning { border-left: 3px solid var(--warn,#8a4b14); padding: 10px 14px; background: #fff6e8; color: #69400e; }
+.committee-deduction { border-top: 1px solid var(--line,#d9dee0); padding-top: 12px; margin-top: 14px; }
+.committee .quote-button { display: block; width: 100%; min-height: 44px; line-height: 1.65; cursor: pointer; }
+.committee :is(button,input,select,textarea,summary):focus-visible { outline: 3px solid var(--blue,#225c9b); outline-offset: 3px; }
+.committee-original { margin-top: 20px; padding: 16px; background: var(--tint,#f4f5f3); border-radius: 6px; }
+.committee-original mark { background: #ffe08a; color: #332300; }
+.committee [hidden] { display: none; }
+@media(max-width:600px) { .committee-personas { grid-template-columns: minmax(0,1fr); } .committee .check-row { align-items: flex-start; } }

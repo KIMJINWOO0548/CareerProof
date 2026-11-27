@@ -8,6 +8,8 @@
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/design.css">
   <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/review.css">
+  <link rel="stylesheet" href="/research.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -20,6 +22,8 @@
           <span class="nav-label">지원서 작업</span>
           <button type="button" data-nav="writer" class="nav-link"><i class="icon doc" aria-hidden="true"></i>문항 작성</button>
           <button type="button" data-nav="facts" class="nav-link"><i class="icon people" aria-hidden="true"></i>사실 원장</button>
+          <button type="button" data-nav="research" class="nav-link"><i class="icon brief" aria-hidden="true"></i>공고·포트폴리오</button>
+          <button type="button" data-nav="committee" class="nav-link"><i class="icon review" aria-hidden="true"></i>심사 위원회</button>
           <button type="button" data-nav="export" class="nav-link"><i class="icon out" aria-hidden="true"></i>확정본 내보내기</button>
         </div>
       </nav>
@@ -33,6 +37,24 @@
         <header class="page-head"><h1 id="page-title" tabindex="-1">새 지원 프로젝트</h1><p id="subtitle"></p></header>
         <p id="status" class="status-message" role="status" aria-live="polite"></p>
         <div id="stage"></div>
+        <section class="panel" aria-labelledby="privacy-title">
+          <h2 id="privacy-title">개인정보와 작업 삭제</h2>
+          <p class="metadata">현재 탭의 편집 내용과 이 브라우저의 전체 서버 작업·실행 기록을 삭제합니다. 내려받은 파일과 다른 탭의 메모리는 별도로 정리하세요.</p>
+          <button type="button" class="btn ghost" id="privacy-erase">작업과 전체 기록 삭제…</button>
+        </section>
+        <details id="server-runs" class="panel action-details">
+          <summary>서버 작성 목록 · 작업 다시 열기</summary>
+          <p class="metadata">같은 브라우저에서 시작한 서버 실행의 문항과 추천본을 엽니다. 서버 재시작 후에는 최근 반복 작성 기록에서 마지막 회차와 상태를 확인할 수 있습니다.</p>
+          <div class="form-flow">
+            <label class="field"><span>서버 작업</span><select id="worker-choice" disabled></select></label>
+            <div class="cta-row">
+              <button class="btn primary" type="button" id="worker-open" disabled>선택한 작업 열기</button>
+              <button class="btn secondary" type="button" id="worker-refresh">목록 새로고침</button>
+              <button class="btn ghost" type="button" id="worker-delete" disabled>서버 작업 삭제</button>
+            </div>
+            <p class="metadata" id="worker-status" role="status"></p>
+          </div>
+        </details>
         <details id="run-history" class="panel action-details">
           <summary>최근 반복 작성 기록</summary>
           <p class="metadata">이 브라우저의 회차와 상태, 확인된 비용을 로컬에 기록합니다. 새로고침한 뒤에도 결과를 조회할 수 있습니다.</p>
