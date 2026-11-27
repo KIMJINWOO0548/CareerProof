@@ -1,0 +1,11 @@
+*
+!backend/
+!backend/**
+!frontend/
+!frontend/**
+!docs/
+docs/*
+!docs/ui/
+docs/ui/*
+!docs/ui/style.css
+**/__pycache__/

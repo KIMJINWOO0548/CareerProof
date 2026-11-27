@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>CareerProof · 지원서 작업 공간</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/design.css">
+  <link rel="stylesheet" href="/app.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#page-title">본문으로 이동</a>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-sign" aria-hidden="true"><i></i></span><span>CareerProof</span></div>
+      <nav id="navigation" aria-label="작업 메뉴">
+        <div class="nav-group">
+          <span class="nav-label">지원서 작업</span>
+          <button type="button" data-nav="writer" class="nav-link"><i class="icon doc" aria-hidden="true"></i>문항 작성</button>
+          <button type="button" data-nav="facts" class="nav-link"><i class="icon people" aria-hidden="true"></i>사실 원장</button>
+          <button type="button" data-nav="export" class="nav-link"><i class="icon out" aria-hidden="true"></i>확정본 내보내기</button>
+        </div>
+      </nav>
+    </aside>
+    <div class="main-area">
+      <header class="topbar">
+        <span class="breadcrumbs" id="context">내 작업 공간</span>
+        <span class="mode"><i aria-hidden="true"></i>로컬 메모리</span>
+      </header>
+      <main class="page">
+        <header class="page-head"><h1 id="page-title" tabindex="-1">새 지원 프로젝트</h1><p id="subtitle"></p></header>
+        <p id="status" class="status-message" role="status" aria-live="polite"></p>
+        <div id="stage"></div>
+        <noscript>지원서 편집기를 열려면 브라우저의 JavaScript를 활성화해 주세요.</noscript>
+      </main>
+    </div>
+  </div>
+  <dialog id="review" aria-labelledby="review-title"></dialog>
+  <input id="restore-file" type="file" accept=".json,application/json" hidden>
+</body>
+</html>

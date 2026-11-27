@@ -1,0 +1,7 @@
+{
+  "as_of": "2026-11-27",
+  "source": "https://platform.claude.com/docs/en/models/haiku-4-5/overview",
+  "model": "claude-haiku-4-5-20251001",
+  "usd_per_million_input": "1",
+  "usd_per_million_output": "5"
+}

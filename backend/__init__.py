@@ -1,0 +1,1 @@
+"""CareerProof local web application."""
