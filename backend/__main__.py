@@ -12,6 +12,7 @@ from pathlib import Path
 from threading import BoundedSemaphore
 from urllib.parse import urlsplit
 
+from .agent_tasks import AgentTasks
 from .drafts import DraftError, make_draft
 from .history import EVENT_LIMIT, RUN_ID, History, HistoryError
 from .receipts import DraftReceipts
@@ -25,6 +26,7 @@ ASSETS = {
     "/index.html": ("frontend/index.html", "text/html"),
     "/design.css": ("docs/ui/style.css", "text/css"),
     "/app.css": ("frontend/app.css", "text/css"),
+    "/agent-ui.js": ("frontend/agent-ui.js", "text/javascript"),
     "/app.js": ("frontend/app.js", "text/javascript"),
     "/workspace.js": ("frontend/workspace.js", "text/javascript"),
     "/analysis.js": ("frontend/analysis.js", "text/javascript"),
@@ -52,6 +54,7 @@ class LocalApp(ThreadingHTTPServer):
         self.draft_slot = BoundedSemaphore(1)
         self.history = History(history_path)
         self.receipts = DraftReceipts()
+        self.agent_tasks = AgentTasks()
         self.workers = WorkerManager(self.history, self.generate)
 
     def generate(self, data, key):
@@ -67,6 +70,8 @@ class LocalApp(ThreadingHTTPServer):
 
     def server_close(self):
         super().server_close()
+        if hasattr(self, "agent_tasks"):
+            self.agent_tasks.close()
         if hasattr(self, "workers"):
             self.workers.close()
         if hasattr(self, "history"):
@@ -147,6 +152,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise HistoryError(409, "초안·위원회 요청이 진행 중입니다. 응답과 사용량 정산이 끝난 뒤 삭제하세요.")
             try:
                 count = self.server.workers.erase_owner(owner)
+                self.server.agent_tasks.erase_owner(owner)
             finally:
                 self.server.draft_slot.release()
             self.respond_json(200, {"deleted": True, "runs": count, "receiptTtlSeconds": 600})
@@ -245,8 +251,9 @@ class Handler(BaseHTTPRequestHandler):
                 raise DraftError(403, "현재 로컬 작업 화면에서 요청하세요.")
             history = self.path.startswith("/api/history/")
             workers = self.path == "/api/runs" or self.path.startswith("/api/runs/")
+            agent = re.fullmatch(r"/api/agent/(start|result|cancel|read|claim|submit)", self.path)
             evidence = self.path in {"/api/extract", "/api/github", "/api/dart"}
-            if self.path not in {"/api/draft", "/api/committee"} and not history and not workers and not evidence:
+            if self.path not in {"/api/draft", "/api/committee"} and not history and not workers and not evidence and not agent:
                 raise DraftError(404, "요청 경로를 찾을 수 없습니다.")
             if self.headers.get("X-CareerProof-Request") != "1":
                 raise DraftError(403, "초안 요청을 확인할 수 없습니다.")
@@ -263,6 +270,11 @@ class Handler(BaseHTTPRequestHandler):
                 data = json.loads(self.rfile.read(length).decode("utf-8"))
             except (ValueError, RecursionError):
                 raise DraftError(400, "JSON 요청을 읽을 수 없습니다.") from None
+            if agent:
+                op = agent[1]
+                owner = self.history_owner()[0] if op in {"start", "result", "cancel"} else None
+                self.respond_json(200, self.server.agent_tasks.handle(op, data, owner))
+                return
             if history:
                 self.history_post(data)
                 return

@@ -2,6 +2,11 @@
 !package.json
 !backend/
 !backend/**
+!skills/
+skills/*
+!skills/careerproof-resume/
+skills/careerproof-resume/*
+!skills/careerproof-resume/SKILL.md
 !frontend/
 !frontend/**
 !docs/

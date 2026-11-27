@@ -6,6 +6,7 @@ import { mountCommittee } from "./committee-ui.js";
 import { createLoop } from "./loop.js";
 import { createRunJournal, ensureSession, flushRunJournals } from "./journal.js";
 import { mountStyleTools } from "./style-tools.js";
+import { openAgentDraft } from "./agent-ui.js";
 import { RemoteRun, listRemoteRuns, openRemoteRun, startRemoteRun, deleteRemoteRun } from "./remote-runs.js";
 import {
   createWorkspace, addFact, confirmFact, importResume, addQuestion,
@@ -21,7 +22,8 @@ const loops = new Map();
 const recentWriter = new WeakMap();
 const titles = { writer: "문항 작성", facts: "사실 원장", research: "공고·포트폴리오", committee: "심사 위원회", export: "확정본 내보내기" };
 let committeeView;
-const kinds = { self_intro: "자기소개서", career_desc: "경력기술서" };
+const kinds = { self_intro: "자기소개서", career_desc: "경력기술서", portfolio: "포트폴리오 설명", resume_form: "이력서 양식" };
+const narrativeKind = kind => kind === "self_intro" || kind === "career_desc";
 const cloudModels = {anthropic: "claude-haiku-4-5-20251001", openai: "gpt-4.1-mini-2025-04-14", gemini: "gemini-2.5-flash-lite"};
 const isCloud = provider => Object.hasOwn(cloudModels, provider);
 let workspace = null;
@@ -223,7 +225,7 @@ function questionForm() {
   return `<form id="question-form" class="form-flow">
     ${field("문항 제목", "title", 'required maxlength="250" placeholder="공고의 문항을 입력하세요."')}
     <div class="field-grid"><label class="field"><span>문서 종류</span><select name="kind">
-      <option value="self_intro">자기소개서</option><option value="career_desc">경력기술서</option>
+      ${Object.entries(kinds).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}
     </select></label>${field("최대 글자 수", "limit", 'required type="number" min="1" max="100000" value="1000"')}</div>
     <details class="action-details"><summary>바이트·줄·문자 계산 규칙</summary><div class="form-flow">
       <div class="field-grid">${field("최대 바이트 (선택)", "maxBytes", 'type="number" min="1" max="1000000"')}${field("최대 줄 수 (선택)", "maxLines", 'type="number" min="1" max="100000"')}</div>
@@ -348,8 +350,9 @@ function modelPanel(q, draft) {
   const busy = request?.questionId === q.id;
   const live = ["running", "pausing", "paused"].includes(loops.get(q.id)?.controller.state.phase);
   const activeElsewhere = workspace.questions.find(item => item.id !== q.id && (locked(item) || request?.questionId === item.id));
+  const repeatButton = narrativeKind(q.kind) ? button("반복 작성 설정", "loop-settings", "secondary", generating()) : "";
   const controls = busy ? button("응답 수신 중단", "cancel-request") : !live
-    ? button("작성 설정", "model", "secondary", generating()) + button("반복 작성 설정", "loop-settings", "secondary", generating()) : "";
+    ? button("작성 설정", "model", "secondary", generating()) + repeatButton + button("내 Codex·Claude 연결", "personal-agent", "secondary", generating()) : "";
   return `<section class="panel model-offer"><div class="section-line"><h2>모델 초안 제안</h2>
     <div class="cta-row">${controls}</div></div>
     ${activeElsewhere ? `<p class="metadata">다른 문항에서 모델을 사용하고 있습니다.
@@ -360,7 +363,7 @@ function modelPanel(q, draft) {
       <div class="diff after"><strong>도착한 제안</strong><p>${esc(offer.text)}</p></div></div>
       <p class="metadata">${esc(offer.context)} · 근거 ${offer.factIds.length}건</p>
       <div class="cta-row">${button("편집기에 반영", "apply-offer", "primary")}${button("제안 닫기", "dismiss-offer", "ghost")}</div>`
-      : !loops.has(q.id) ? '<p class="description">연결한 근거로 초안을 한 번 요청하거나, 횟수를 정해 개선된 답변을 비교하세요.</p>' : ""}
+      : !loops.has(q.id) ? '<p class="description">이 문항에 연결한 사실로 초안을 받아 편집본과 비교하세요.</p>' : ""}
   </section>`;
 }
 
@@ -401,6 +404,10 @@ function updateEditor() {
   const version = q.headRevisionId ? revisionLabel(q, q.headRevisionId) : "첫 편집";
   document.querySelector("#version-state").textContent = `편집본 ${version}${modified(q) ? " · 저장 전" : ""} / 확정본 ${revisionLabel(q, q.approvedRevisionId)}`;
   setEditorLocks(q);
+  if (!narrativeKind(q.kind)) {
+    document.querySelector("#score").innerHTML = '<h2>문서 검토</h2><p class="muted-copy">항목별 사실과 출처, 본인의 기여 범위를 확인하세요. 문체 진단은 자기소개서와 경력기술서에 적용합니다.</p>';
+    return;
+  }
   const axes = [["형식 반복","pattern",30],["상투 표현","cliche",30],["구체성 결핍","specificity_deficit",40]];
   document.querySelector("#score").innerHTML = `<div class="section-line"><h2>문체 진단</h2><span class="badge">보정 전</span></div>
     <p class="score-total">${score.total === null ? "—" : score.total}<span> / 100</span></p>
@@ -757,7 +764,7 @@ async function submitLoop(form, q, settings) {
     run.controller = createLoop({
       workspace, question: q, initial: snapshot, maxIterations, target, provider: run.provider, budgetUsd: run.budgetUsd,
       generate: ({previous, facts, question, remainingUsd, signal, feedback}) => {
-        const payload = {facts, question, charLimit: q.limit, feedback};
+        const payload = {facts, question, charLimit: q.limit, documentKind: q.kind, feedback};
         if (previous) payload.previousText = previous.text;
         return requestDraft(run, payload, signal, remainingUsd);
       },
@@ -811,7 +818,7 @@ async function fetchDraft(form) {
   refreshModelPanel();
   tell(`${model}에 초안을 요청했습니다.`);
   try {
-    const result = await requestDraft(settings, {question:q.title, facts}, pending.controller.signal, settings.budgetUsd);
+    const result = await requestDraft(settings, {question:q.title, facts, charLimit:q.limit, documentKind:q.kind}, pending.controller.signal, settings.budgetUsd);
     if (pending !== request) return;
     const cost = result.usage?.costUsd;
     const usage = isCloud(provider) && cost != null && Number.isFinite(Number(cost)) ? ` · 사용액 $${cost}` : "";
@@ -896,6 +903,28 @@ async function handleAction(action) {
     }
     case "approve": previewRevision(q, revisionOf(q)); break;
     case "model": await modelSettings(q); break;
+    case "personal-agent": {
+      if (!q || generating() || locked(q)) break;
+      const project = workspace;
+      const originalDraft = draftOf(q);
+      const facts = selectedFacts(q).map(({id, text}) => ({id, text}));
+      if (!facts.length) throw new Error("문항에서 확인된 사실을 한 건 이상 선택해 주세요.");
+      openAgentDraft({
+        openDialog, ensureSession, esc,
+        input: {question: q.title, facts, documentKind: q.kind, charLimit: q.limit},
+        onProposal(proposal) {
+          if (workspace !== project || activeQuestion() !== q || originalDraft !== draftOf(q) || locked(q) ||
+              !proposal.factIds.every(id => facts.some(original => original.id === id &&
+                selectedFacts(q).some(live => live.id === id && live.text === original.text)))) {
+            throw new Error("문항이나 연결 근거가 바뀌었습니다. 현재 편집본에서 새 요청을 만드세요.");
+          }
+          originalDraft.proposal = {...proposal, context: "내 AI 대화에서 받은 초안"};
+          refreshModelPanel();
+          tell("개인 AI의 제안이 도착했습니다. 현재 편집본과 비교해 주세요.");
+        },
+      });
+      break;
+    }
     case "loop-settings": await modelSettings(q, "loop"); break;
     case "loop-resume": await modelSettings(q, "resume"); break;
     case "loop-pause":

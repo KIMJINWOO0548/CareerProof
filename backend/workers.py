@@ -492,8 +492,10 @@ class WorkerManager:
             run.inflight = message["callId"]
             run.last_call = iteration
             provider = run.config["provider"]
+            active_question = question(run.workspace, run.config["questionId"])
             body = dict(provider=provider, model=run.config["model"], question=args["question"],
-                        facts=args["facts"], feedback=args["feedback"], charLimit=question(run.workspace, run.config["questionId"])["limit"])
+                        facts=args["facts"], feedback=args["feedback"], charLimit=active_question["limit"],
+                        documentKind=active_question["kind"])
             if args.get("previous"):
                 body["previousText"] = args["previous"]["text"]
             if provider in CLOUD_PROVIDERS:

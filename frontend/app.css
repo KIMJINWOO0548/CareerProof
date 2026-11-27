@@ -81,6 +81,9 @@ input[type="checkbox"] { accent-color: var(--blue); min-width: 17px; min-height:
 .review-body { max-height: 50dvh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: #f5f6f3; padding: 12px; }
 .empty-message { padding: 12px 0; font-size: 14px; color: var(--muted); }
 dialog .form-flow { margin-top: 12px; }
+.agent-command { margin: 0; padding: 10px 12px; background: var(--tint); font: 13px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+[data-agent-view] details > summary { cursor: pointer; }
+[data-agent-view] [data-code] { font-family: var(--mono); }
 @media (max-width: 980px) { .grid-main { grid-template-columns: minmax(0,1.35fr) minmax(205px,1fr); gap: 12px; } }
 @media (max-width: 730px) {
   .grid-main { grid-template-columns: 1fr; }

@@ -8,6 +8,8 @@ import secrets
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
 
+from .writing_skill import DOCUMENT_KINDS, writing_instructions
+
 PRICING = json.loads(Path(__file__).with_name("pricing.json").read_text(encoding="utf-8"))
 CLOUD_PROVIDERS = tuple(PRICING["providers"])
 MAX_OUTPUT = 1200
@@ -125,7 +127,12 @@ def input_context(data):
         items.append({"id": fact_id, "text": text_field(item.get("text"), 4000)})
     if sum(len(item["text"]) for item in items) > 30000:
         raise DraftError(422, "선택한 사실은 합계 30,000자까지 보낼 수 있습니다.")
+    document_kind = data.get("documentKind", "self_intro")
+    if document_kind not in DOCUMENT_KINDS:
+        raise DraftError(422, "지원하는 문서 종류를 선택하세요.")
     context = {"question": question, "facts": items}
+    if "documentKind" in data:
+        context["documentKind"] = document_kind
     if "previousText" in data:
         context["previousText"] = text_field(data["previousText"], 50000, allow_blank=True)
     if "charLimit" in data:
@@ -166,6 +173,8 @@ def masked_context(context, terms):
         result["feedback"] = [pattern.sub(replace, item) for item in context["feedback"]]
     if "charLimit" in context:
         result["charLimit"] = context["charLimit"]
+    if "documentKind" in context:
+        result["documentKind"] = context["documentKind"]
     return result, {placeholder: literal for literal, placeholder in lookup.items()}
 
 
@@ -303,9 +312,11 @@ def make_draft(data, key=None, send=request_json):
     if not isinstance(data, dict):
         raise DraftError(422, "JSON 객체를 입력하세요.")
     context = input_context(data)
-    policy = POLICY
+    policy = POLICY + "\n\n" + writing_instructions(context.get("documentKind", "self_intro"))
     if "previousText" in context or "feedback" in context or "charLimit" in context:
         policy += REVISION_POLICY
+    if "feedback" in context:
+        policy += " 반복 작성에서는 선택한 facts의 각 근거를 본문에서 확인할 수 있도록 보존하세요."
     allowed_ids = {item["id"] for item in context["facts"]}
     model = text_field(data.get("model"), 120)
     provider = data.get("provider", "ollama")

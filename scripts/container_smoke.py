@@ -29,6 +29,13 @@ def main():
             raise RuntimeError(f"{path} returned {error.code}: {error.read(512).decode()}") from error
 
     api("/api/history/session", {})
+    task = api("/api/agent/start", {"question": "담당 업무", "documentKind": "career_desc",
+                                   "facts": [{"id": "F-1", "text": FACT}]})
+    code = {"code": task["code"]}
+    assert "경력기술서는" in api("/api/agent/claim", code)["instructions"], "Packaged writing skill unavailable"
+    api("/api/agent/submit", {**code, "draft": {"text": FACT, "factIds": ["F-1"]}})
+    assert api("/api/agent/result", code)["text"] == FACT
+    api("/api/agent/cancel", code)
     assert api("/api/runs")["available"], "Node worker unavailable"
     # This eligible baseline already meets the target and completes before any model call.
     payload = start_payload(target=100, initial={"text": FACT + "가" * 310, "factIds": ["F-1"]}, budgetUsd=0)
@@ -42,7 +49,7 @@ def main():
     api(run_path + "/delete", {"commandId": str(uuid4()), "baseVersion": snapshot["version"]})
     document = api("/api/extract", {"filename": "fixture.pdf", "contentBase64": base64.b64encode(one_page_pdf()).decode()})
     assert "12 test cases" in document["pages"][0]["text"], "Packaged PDF extraction failed"
-    print("Container HTTP, zero-call worker completion and PDF extraction passed")
+    print("Container HTTP, writing skill round trip, zero-call worker completion and PDF extraction passed")
 
 
 if __name__ == "__main__":

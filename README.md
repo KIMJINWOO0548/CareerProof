@@ -66,6 +66,32 @@ python -m backend
 - 반복 요청에는 기준 본문과 직전 점검 의견도 포함됩니다. 서버는 클라우드에 보내는 이 필드에도 같은 마스킹을 적용합니다. 브라우저는 실행에 필요한 동안 키를 메모리에 보관하고 일시 정지·종료 때 지웁니다. 서버의 마스킹 표는 호출 단위입니다. 개인 이름·주소와 자유 서술을 확인한 뒤 전송하세요.
 - 비용은 최대 출력까지 사전 검사하고 확인한 실사용량을 회차마다 차감합니다. 응답 형식이 잘못돼도 확인된 과금은 반영합니다. 유료 호출이 발송된 후 사용량을 확인할 수 없으면 같은 실행의 재개를 차단합니다. 브라우저에서 수신을 중단해도 이미 전송한 호출에는 비용이 발생할 수 있습니다.
 
+### 내 Codex CLI 또는 Claude Code로 작성하기
+
+로그인한 공식 CLI로 한 문항의 초안을 작성할 수 있습니다. CareerProof는 선택한 자료를 준비하고, 사용자가 자기 PC에서 실행한 CLI가 모델에 요청합니다. 로그인·사용량은 해당 클라이언트와 계정에서 관리합니다. [Codex 비대화형 실행](https://developers.openai.com/codex/noninteractive) · [Claude Code 비대화형 실행](https://code.claude.com/docs/en/headless)
+
+1. **문항 작성 → 내 Codex·Claude 연결**에서 확인된 근거를 검토합니다. 추가로 가릴 이름·주소를 적고 **연결 코드 만들기**를 누릅니다.
+2. **AI가 읽을 내용 확인**에서 마스킹 결과를 확인합니다. CareerProof를 내려받은 폴더의 터미널에서 아래 두 명령 중 하나를 실행하고, 코드 입력을 요청할 때 붙여넣습니다. 원하는 모델이 있으면 `--model 모델이름`을 덧붙입니다.
+3. 창을 열어 두면 받은 초안과 현재 편집본을 비교할 수 있습니다. **편집기에 반영**을 누른 뒤 평소처럼 근거와 분량을 확인하고 저장·확정합니다.
+
+```sh
+python scripts/careerproof_cli.py codex
+python scripts/careerproof_cli.py claude
+```
+
+기본 포트는 8765입니다. 다른 포트인 경우 연결 창에 표시되는 명령을 사용하세요. Docker 사용 시 위 명령은 CLI에 로그인해 둔 **호스트 PC**에서 실행합니다. Windows에서는 PATH에서 공식 `codex.exe` 또는 `claude.exe`를 찾습니다. 이 경로에서는 본인의 CLI가 지원하는 로그인과 작성 전용 실행 옵션이 필요합니다. 도구는 보낼 문항과 선택한 사실을 표준 입력으로 전달하고 한 번의 생성만 요청합니다. 연결 코드는 15분 후 만료되며 창을 닫으면 해당 작업을 취소합니다. 이미 전달한 자료와 사용량은 해당 제공자의 정책을 따릅니다.
+
+**이미 열린 AI 대화와 내 스킬을 함께 쓰려면** 로컬 MCP 브리지를 등록할 수 있습니다. 아래에서 스크립트 경로를 내려받은 파일의 절대 경로로 바꾸고 사용할 클라이언트의 명령만 실행하세요. CLI 직접 작성에는 이 등록 과정이 필요하지 않습니다. 웹앱과 같은 포트를 쓰도록 필요하면 스크립트 경로 뒤에 `--port 번호`를 추가합니다. [Codex MCP](https://developers.openai.com/codex/mcp) · [Claude Code MCP](https://code.claude.com/docs/en/mcp)
+
+```sh
+codex mcp add careerproof -- python "/absolute/path/to/CareerProof/scripts/careerproof_mcp.py"
+claude mcp add --transport stdio --scope local careerproof -- python "/absolute/path/to/CareerProof/scripts/careerproof_mcp.py"
+```
+
+등록 후 CareerProof 연결 창에서 **이미 열린 AI 대화에서 작성하기 (MCP)**를 펼칩니다. 표시된 요청을 자신이 로그인한 대화에 붙여넣으면 `read_writing_task`가 해당 문항을 읽고 `submit_draft`가 초안과 사용한 근거 ID를 반환합니다. 이 대화에는 평소 쓰는 개인 스킬도 지정할 수 있습니다.
+
+**작성 스킬**은 웹앱의 BYOK·Ollama와 개인 CLI·MCP에 공통으로 전달됩니다. 자기소개서는 질문에 답하는 한 가지 경험을, 경력기술서는 담당 범위와 산출물을 중심으로 작성합니다. 팀의 성과와 본인의 기여, 측정 기간·단위·비교 대상을 구분합니다. 문서 종류별 지침은 모델 호출 경로에서 테스트했고 실제 글의 품질 변화는 별도 평가가 필요합니다. [한국어 지원서 작성 스킬](skills/careerproof-resume/SKILL.md)
+
 ### 실행 기록의 저장 위치
 
 본문·사실·API 키는 이벤트 기록에서 제외합니다. 로컬 서버는 기본적으로 `~/.careerproof/history.sqlite3`에 회차 메타데이터를 기록합니다. `CAREERPROOF_DATA_DIR`로 저장 폴더를 바꿀 수 있고 Compose는 `careerproof-history` 볼륨을 사용합니다. 실행 선택 목록에서 개별 기록을 삭제할 수 있습니다. 작업 JSON에는 사용자가 작성한 원문이 포함됩니다.

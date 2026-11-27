@@ -3,6 +3,7 @@ FROM python:3.12-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/careerproof
 COPY backend backend
+COPY skills/careerproof-resume/SKILL.md skills/careerproof-resume/SKILL.md
 COPY frontend frontend
 COPY package.json .
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
