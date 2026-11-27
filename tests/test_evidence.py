@@ -3,6 +3,8 @@ import io
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
+from subprocess import CompletedProcess
 import zipfile
 from pathlib import Path
 from uuid import uuid4
@@ -36,6 +38,14 @@ def one_page_pdf():
 
 
 class PortfolioTest(unittest.TestCase):
+    def test_poppler_and_xpdf_both_credit_glyph_and_cog(self):
+        for tool, banner, requires_path in [
+            ("poppler-fixture", b"pdftotext version 22.12.0\nThe Poppler Developers\nGlyph & Cog, LLC", False),
+            ("xpdf-fixture", b"pdftotext version 4.06\nCopyright Glyph & Cog, LLC", True),
+        ]:
+            with patch("backend.evidence.subprocess.run", return_value=CompletedProcess([], 0, b"", banner)):
+                self.assertEqual(requires_pdf_path(tool), requires_path)
+
     def test_korean_document_previews(self):
         line = "가상 장비에서 회귀 시험 12건을 수행했다."
         for ext, path in [("docx", "word/document.xml"), ("hwpx", "Contents/section0.xml")]:

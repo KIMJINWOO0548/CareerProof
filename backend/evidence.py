@@ -63,7 +63,9 @@ def pdf_tool():
 def requires_pdf_path(tool):
     version = subprocess.run([tool, "-v"], capture_output=True, timeout=3,
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    return b"glyph & cog" in (version.stdout + version.stderr).lower()
+    banner = (version.stdout + version.stderr).lower()
+    # Poppler also credits Glyph & Cog but accepts '-' as its input stream.
+    return b"glyph & cog" in banner and b"poppler" not in banner
 
 
 def pdf_pages(content, allow_temporary):

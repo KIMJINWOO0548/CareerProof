@@ -5,6 +5,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 from uuid import uuid4
 
@@ -21,8 +22,11 @@ def main():
     def api(path, data=None):
         req = Request(origin + path, data=json.dumps(data).encode() if data is not None else None,
                       headers={"Origin": origin, "Content-Type": "application/json", "X-CareerProof-Request": "1"})
-        with client.open(req, timeout=20) as response:
-            return json.load(response)
+        try:
+            with client.open(req, timeout=20) as response:
+                return json.load(response)
+        except HTTPError as error:
+            raise RuntimeError(f"{path} returned {error.code}: {error.read(512).decode()}") from error
 
     api("/api/history/session", {})
     assert api("/api/runs")["available"], "Node worker unavailable"
